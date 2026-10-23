@@ -1,0 +1,73 @@
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { Layout } from './componentes/Layout';
+import { RutaProtegida } from './auth/RutaProtegida';
+import { Login } from './paginas/Login';
+import { Campanas } from './paginas/Campanas';
+import { CampanaFormulario } from './paginas/CampanaFormulario';
+import { CampanaDetalle } from './paginas/CampanaDetalle';
+import { ImportacionDetalle } from './paginas/ImportacionDetalle';
+import { Exclusiones } from './paginas/Exclusiones';
+import { Cumplimiento } from './paginas/Cumplimiento';
+import { Usuarios } from './paginas/Usuarios';
+
+const GESTION = ['administrador', 'supervisor'] as const;
+
+export function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        element={
+          <RutaProtegida>
+            <Layout />
+          </RutaProtegida>
+        }
+      >
+        <Route path="/campanas" element={<Campanas />} />
+        <Route
+          path="/campanas/nueva"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <CampanaFormulario />
+            </RutaProtegida>
+          }
+        />
+        <Route path="/campanas/:id" element={<CampanaDetalle />} />
+        <Route
+          path="/campanas/:id/editar"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <CampanaFormulario />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/importaciones/:id"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <ImportacionDetalle />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/exclusiones"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <Exclusiones />
+            </RutaProtegida>
+          }
+        />
+        <Route path="/cumplimiento" element={<Cumplimiento />} />
+        <Route
+          path="/usuarios"
+          element={
+            <RutaProtegida roles={['administrador']}>
+              <Usuarios />
+            </RutaProtegida>
+          }
+        />
+      </Route>
+      <Route path="*" element={<Navigate to="/campanas" replace />} />
+    </Routes>
+  );
+}
