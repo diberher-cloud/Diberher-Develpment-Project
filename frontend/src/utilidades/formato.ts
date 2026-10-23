@@ -55,3 +55,32 @@ export function validarArchivoCsv(archivo: File): string | null {
   }
   return null;
 }
+
+/** Valida un archivo de importación (.csv o .xlsx) en cliente. Devuelve el mensaje de error o null. */
+export function validarArchivoTabla(archivo: File): string | null {
+  const nombre = archivo.name.toLowerCase();
+  if (!nombre.endsWith('.csv') && !nombre.endsWith('.xlsx')) return 'El archivo debe tener extensión .csv o .xlsx.';
+  if (archivo.size > MAX_BYTES_ARCHIVO) {
+    return `El archivo pesa ${formatearTamano(archivo.size)} y supera el máximo de 10 MiB.`;
+  }
+  return null;
+}
+
+/** Fecha de hoy en Bogotá como 'YYYY-MM-DD'. */
+export function hoyBogota(ahora: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: ZONA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(ahora);
+}
+
+/** Suma días a una fecha 'YYYY-MM-DD' (aritmética de calendario, sin zona). */
+export function sumarDias(fecha: string, dias: number): string {
+  const [a, m, d] = fecha.split('-').map(Number);
+  const r = new Date(Date.UTC(a, m - 1, d + dias));
+  return r.toISOString().slice(0, 10);
+}
+
+/** Segundos -> 'HH:MM:SS'. */
+export function formatearDuracion(segundos: number): string {
+  const s = Math.max(0, Math.floor(segundos));
+  const dos = (n: number) => String(n).padStart(2, '0');
+  return `${dos(Math.floor(s / 3600))}:${dos(Math.floor((s % 3600) / 60))}:${dos(s % 60)}`;
+}

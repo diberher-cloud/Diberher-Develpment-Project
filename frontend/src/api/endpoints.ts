@@ -3,7 +3,9 @@ import type {
   AplicaA, Campana, CampanaActualizar, CampanaCliente, CampanaCrear, ErrorImportacion, EstadoCampana,
   Exclusion, Festivo, Importacion, MotivoExclusion, Pagina, Politica, RespuestaLogin,
   ResultadoEvaluacion, ResultadoImportacionExclusiones, Rol, Severidad, TipoCampana, Usuario,
-  ConfiguracionPolitica,
+  ConfiguracionPolitica, AgenteAsignado, AgenteSupervision, CambioEstadoAgente, Canal, CampanaConsola,
+  EstadoAgente, EventoSimulacion, FichaCliente, Llamada, OrigenGestion, RegistroTrabajo, ResultadoSimulacion,
+  ResultadoTipificacion, TipificacionCrear, Tipificacion, TokenTelefonia,
 } from './tipos';
 
 export interface ParamsPagina { page?: number; page_size?: number }
@@ -70,5 +72,37 @@ export const generarFestivos = (anio: number) =>
 export const crearFestivo = (c: { fecha: string; nombre: string }) => solicitar<Festivo>('POST', '/festivos', { cuerpo: c });
 export const actualizarFestivo = (id: number, c: { activo?: boolean; nombre?: string }) =>
   solicitar<Festivo>('PATCH', `/festivos/${id}`, { cuerpo: c });
-export const evaluarCumplimiento = (c: { tipo_campana: TipoCampana; momento?: string }) =>
+export const evaluarCumplimiento = (c: { tipo_campana: TipoCampana; momento?: string; canal?: Canal; cliente_id?: number }) =>
   solicitar<ResultadoEvaluacion>('POST', '/cumplimiento/evaluar', { cuerpo: c });
+
+// Fase 2A: asignación de agentes (A, S)
+export const listarAgentesCampana = (campanaId: number) =>
+  solicitar<AgenteAsignado[]>('GET', `/campanas/${campanaId}/agentes`);
+export const reemplazarAgentesCampana = (campanaId: number, usuarioIds: number[]) =>
+  solicitar<AgenteAsignado[]>('PUT', `/campanas/${campanaId}/agentes`, { cuerpo: { usuario_ids: usuarioIds } });
+
+// Fase 2A: tipificaciones de campaña y supervisión (A, S)
+export const listarTipificacionesCampana = (
+  campanaId: number,
+  p: ParamsPagina & { resultado?: ResultadoTipificacion | ''; origen?: OrigenGestion | ''; desde?: string; hasta?: string },
+) => solicitar<Pagina<Tipificacion>>('GET', `/campanas/${campanaId}/tipificaciones`, { params: { ...p } });
+export const listarAgentesSupervision = () => solicitar<AgenteSupervision[]>('GET', '/supervision/agentes');
+
+// Fase 2A: consola del agente (G)
+export const obtenerEstadoAgente = () => solicitar<EstadoAgente>('GET', '/consola/estado');
+export const cambiarEstadoAgente = (c: CambioEstadoAgente) => solicitar<EstadoAgente>('PUT', '/consola/estado', { cuerpo: c });
+export const listarCampanasConsola = () => solicitar<CampanaConsola[]>('GET', '/consola/campanas');
+export const listarRegistrosConsola = (p: ParamsPagina & { campana_id?: number | '' }) =>
+  solicitar<Pagina<RegistroTrabajo>>('GET', '/consola/registros', { params: { ...p } });
+export const tomarRegistro = (id: number) => solicitar<FichaCliente>('POST', `/consola/registros/${id}/tomar`);
+export const soltarRegistro = (id: number) => solicitar<void>('POST', `/consola/registros/${id}/soltar`);
+export const obtenerFicha = (id: number) => solicitar<FichaCliente>('GET', `/consola/registros/${id}`);
+export const obtenerLlamada = (id: number) => solicitar<Llamada>('GET', `/consola/llamadas/${id}`);
+export const crearTipificacion = (c: TipificacionCrear) => solicitar<Tipificacion>('POST', '/consola/tipificaciones', { cuerpo: c });
+
+// Fase 2A: telefonía
+export const obtenerTokenTelefonia = () => solicitar<TokenTelefonia>('POST', '/telefonia/token');
+export const simularLlamada = (c: { campana_cliente_id: number; telefono_id: number }) =>
+  solicitar<ResultadoSimulacion>('POST', '/telefonia/simulacion/llamadas', { cuerpo: c });
+export const simularEventoLlamada = (llamadaId: number, e: EventoSimulacion) =>
+  solicitar<void>('POST', `/telefonia/simulacion/llamadas/${llamadaId}/eventos`, { cuerpo: e });

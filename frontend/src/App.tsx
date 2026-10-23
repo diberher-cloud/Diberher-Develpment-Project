@@ -9,6 +9,8 @@ import { ImportacionDetalle } from './paginas/ImportacionDetalle';
 import { Exclusiones } from './paginas/Exclusiones';
 import { Cumplimiento } from './paginas/Cumplimiento';
 import { Usuarios } from './paginas/Usuarios';
+import { Consola } from './paginas/Consola';
+import { SupervisionAgentes } from './paginas/SupervisionAgentes';
 
 const GESTION = ['administrador', 'supervisor'] as const;
 
@@ -54,6 +56,22 @@ export function App() {
           element={
             <RutaProtegida roles={[...GESTION]}>
               <Exclusiones />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/consola"
+          element={
+            <RutaProtegida roles={['agente']}>
+              <Consola />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/supervision/agentes"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <SupervisionAgentes />
             </RutaProtegida>
           }
         />

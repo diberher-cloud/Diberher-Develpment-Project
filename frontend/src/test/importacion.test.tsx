@@ -44,11 +44,11 @@ describe('Importación de clientes', () => {
     expect(fetchMock.mock.calls.length).toBe(llamadasPrevias);
   });
 
-  it('el input solo acepta .csv', async () => {
+  it('el input acepta .csv y .xlsx', async () => {
     iniciarSesionComo('supervisor');
     baseCampana();
     renderizarApp('/campanas/5');
-    expect(await screen.findByLabelText('Archivo CSV de clientes')).toHaveAttribute('accept', '.csv');
+    expect(await screen.findByLabelText('Archivo CSV de clientes')).toHaveAttribute('accept', '.csv,.xlsx');
   });
 
   it('sube el archivo como multipart y muestra los 5 contadores y la tabla de errores', async () => {

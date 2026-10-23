@@ -108,9 +108,9 @@ describe('Listado de campañas', () => {
 
 describe('Navegación por rol', () => {
   it.each([
-    ['administrador', ['Campañas', 'Exclusiones', 'Cumplimiento', 'Usuarios']],
-    ['supervisor', ['Campañas', 'Exclusiones', 'Cumplimiento']],
-    ['agente', ['Campañas', 'Cumplimiento']],
+    ['administrador', ['Campañas', 'Supervisión', 'Exclusiones', 'Cumplimiento', 'Usuarios']],
+    ['supervisor', ['Campañas', 'Supervisión', 'Exclusiones', 'Cumplimiento']],
+    ['agente', ['Campañas', 'Consola', 'Cumplimiento']],
   ] as const)('%s ve el menú %j', async (rol, esperado) => {
     iniciarSesionComo(rol);
     simularFetch(() => respuesta(200, paginaVacia));

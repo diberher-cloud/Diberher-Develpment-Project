@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type KeyboardEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   actualizarCampana, eliminarCampana, listarClientesCampana, listarImportaciones, obtenerCampana,
@@ -6,14 +6,19 @@ import {
 import type { ErrorApi } from '../api/cliente';
 import type { Campana, EstadoCampana } from '../api/tipos';
 import { useAuth } from '../auth/AuthContext';
+import { CampanaAgentes } from '../componentes/CampanaAgentes';
 import { Campo } from '../componentes/Campo';
 import { Cargando } from '../componentes/Cargando';
 import { ImportarClientes } from '../componentes/ImportarClientes';
 import { MensajeError } from '../componentes/MensajeError';
 import { Paginador } from '../componentes/Paginador';
+import { TipificacionesCampana } from '../componentes/TipificacionesCampana';
 import { ETIQUETA_ACCION, ETIQUETA_ESTADO, ETIQUETA_TIPO, TRANSICIONES } from '../utilidades/campanas';
 import { formatearCOP, formatearFecha, formatearFechaHora } from '../utilidades/formato';
 import { comoErrorApi, useCarga } from '../utilidades/useCarga';
+
+type Pestana = 'clientes' | 'agentes' | 'tipificaciones';
+const PESTANAS: [Pestana, string][] = [['clientes', 'Clientes'], ['agentes', 'Agentes'], ['tipificaciones', 'Tipificaciones']];
 
 export function CampanaDetalle() {
   const id = Number(useParams().id);
@@ -23,6 +28,7 @@ export function CampanaDetalle() {
   const [errorAccion, setErrorAccion] = useState<ErrorApi | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [version, setVersion] = useState(0);
+  const [pestana, setPestana] = useState<Pestana>('clientes');
 
   const cargador = useCallback(() => obtenerCampana(id), [id]);
   const { datos: campana, cargando, error, recargar } = useCarga(cargador);
@@ -51,6 +57,17 @@ export function CampanaDetalle() {
       setErrorAccion(comoErrorApi(e));
       setOcupado(false);
     }
+  }
+
+  function teclaPestana(e: KeyboardEvent) {
+    const i = PESTANAS.findIndex(([c]) => c === pestana);
+    let n = -1;
+    if (e.key === 'ArrowRight') n = (i + 1) % PESTANAS.length;
+    else if (e.key === 'ArrowLeft') n = (i + PESTANAS.length - 1) % PESTANAS.length;
+    if (n < 0) return;
+    e.preventDefault();
+    setPestana(PESTANAS[n][0]);
+    document.getElementById(`pestana-${PESTANAS[n][0]}`)?.focus();
   }
 
   if (cargando && !campana) return <Cargando />;
@@ -106,9 +123,37 @@ export function CampanaDetalle() {
       )}
       <MensajeError error={errorAccion} />
 
-      {gestiona && campana.estado !== 'finalizada' && <ImportarClientes campanaId={id} onImportada={alImportar} />}
-      {gestiona && <HistorialImportaciones campanaId={id} version={version} />}
-      {gestiona && <ClientesCampana campana={campana} version={version} />}
+      {gestiona && (
+        <>
+          <div role="tablist" aria-label="Secciones de la campaña" className="pestanas" onKeyDown={teclaPestana}>
+            {PESTANAS.map(([clave, nombre]) => (
+              <button
+                key={clave}
+                type="button"
+                role="tab"
+                id={`pestana-${clave}`}
+                aria-selected={pestana === clave}
+                aria-controls="panel-campana"
+                tabIndex={pestana === clave ? 0 : -1}
+                onClick={() => setPestana(clave)}
+              >
+                {nombre}
+              </button>
+            ))}
+          </div>
+          <div role="tabpanel" id="panel-campana" aria-labelledby={`pestana-${pestana}`}>
+            {pestana === 'clientes' && (
+              <>
+                {campana.estado !== 'finalizada' && <ImportarClientes campanaId={id} onImportada={alImportar} />}
+                <HistorialImportaciones campanaId={id} version={version} />
+                <ClientesCampana campana={campana} version={version} />
+              </>
+            )}
+            {pestana === 'agentes' && <CampanaAgentes campana={campana} />}
+            {pestana === 'tipificaciones' && <TipificacionesCampana campanaId={id} />}
+          </div>
+        </>
+      )}
     </section>
   );
 }

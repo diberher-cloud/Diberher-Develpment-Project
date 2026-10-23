@@ -72,10 +72,22 @@ function TablaPolitica({ politica: p }: { politica: Politica }) {
       <ul className="lista-simple">
         <li>Festivos: {c.permitir_festivos ? 'se permite llamar' : 'no se llama'}.</li>
         <li>
-          Frecuencia (solo informativa en esta fase): {c.frecuencia.max_contactos_dia} contacto(s) por día,{' '}
-          {c.frecuencia.max_canales_semana} canal(es) por semana ({SEMANA[c.frecuencia.semana]})
-          {c.frecuencia.solo_tras_contacto_directo ? ', solo tras contacto directo' : ''}.
+          Frecuencia: máximo {c.frecuencia.max_contactos_dia} contacto(s) por día y {c.frecuencia.max_canales_semana}{' '}
+          medio(s) por semana ({SEMANA[c.frecuencia.semana]})
+          {c.frecuencia.solo_tras_contacto_directo ? ', solo tras un contacto directo' : ''}.
         </li>
+        {c.frecuencia.contar_intentos_sin_contacto !== undefined && (
+          <li>
+            Intentos sin contacto directo: {c.frecuencia.contar_intentos_sin_contacto ? 'cuentan' : 'no cuentan'} para el límite de
+            frecuencia.
+          </li>
+        )}
+        {c.entrantes && (
+          <li>
+            Contactos iniciados por el cliente: {c.entrantes.responder_fuera_de_franja ? 'se responde' : 'no se responde'} fuera de la
+            franja; {c.entrantes.establecen_contacto_directo ? 'establecen' : 'no establecen'} contacto directo.
+          </li>
+        )}
       </ul>
     </article>
   );

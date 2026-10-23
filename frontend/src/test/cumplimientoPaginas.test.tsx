@@ -11,7 +11,8 @@ const cfg: ConfiguracionPolitica = {
     viernes: [{ inicio: '07:00', fin: '19:00' }], sabado: [{ inicio: '08:00', fin: '15:00' }], domingo: [],
   },
   permitir_festivos: false,
-  frecuencia: { max_contactos_dia: 1, max_canales_semana: 1, semana: 'calendario', solo_tras_contacto_directo: true },
+  frecuencia: { max_contactos_dia: 1, max_canales_semana: 1, semana: 'calendario', solo_tras_contacto_directo: true, contar_intentos_sin_contacto: true },
+  entrantes: { responder_fuera_de_franja: true, establecen_contacto_directo: true },
 };
 const politicas: Politica[] = [
   { id: 1, tipo_campana: 'cobranza', version: 1, activa: true, configuracion: cfg, creado_por: null, creado_en: '2026-10-23T15:00:00Z' },

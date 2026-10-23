@@ -102,12 +102,12 @@ describe('Importación desde el detalle de campaña: casos adicionales', () => {
     for (const d of detalles) expect(alerta).toHaveTextContent(d.mensaje);
   });
 
-  it('un archivo que no es .csv se rechaza en cliente sin llamar a la API', async () => {
+  it('un archivo que no es .csv ni .xlsx se rechaza en cliente sin llamar a la API', async () => {
     iniciarSesionComo('supervisor');
     const m = base(() => respuesta(201, imp));
     renderizarApp('/campanas/5');
     const user = userEvent.setup({ applyAccept: false });
-    await user.upload(await screen.findByLabelText('Archivo CSV de clientes'), new File(['a'], 'datos.xlsx'));
+    await user.upload(await screen.findByLabelText('Archivo CSV de clientes'), new File(['a'], 'datos.txt'));
     expect(await screen.findByText(/extensión \.csv/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Importar' })).toBeDisabled();
     expect(m.mock.calls.some(([, i]) => i?.method === 'POST')).toBe(false);

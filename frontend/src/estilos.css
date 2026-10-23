@@ -59,3 +59,14 @@ tbody th { font-weight: 600; }
 .lista-simple { list-style: none; padding: 0; margin: 0; }
 .guion { white-space: pre-wrap; background: var(--gris); padding: .75rem; border-radius: 6px; }
 @media (max-width: 600px) { .contenido { padding: .5rem; } h1 { font-size: 1.25rem; } .cabecera { padding: .5rem; } }
+.pestanas { display: flex; flex-wrap: wrap; gap: .25rem; border-bottom: 1px solid var(--borde); margin: 1.5rem 0 0; }
+.pestanas button { border-radius: 6px 6px 0 0; border-bottom: none; }
+.pestanas button[aria-selected="true"] { background: var(--azul); border-color: var(--azul); color: #fff; font-weight: 600; }
+.agente-disponible { background: #dcfce7; border-color: #86efac; color: var(--verde); }
+.agente-en_llamada { background: #dbeafe; border-color: #93c5fd; }
+.agente-tipificando { background: #fef3c7; border-color: #fcd34d; }
+.agente-pausa { background: #fef3c7; border-color: #fcd34d; }
+.agente-desconectado { background: #e5e7eb; }
+.estado-softphone { font-weight: 600; }
+fieldset { border: 1px solid var(--borde); border-radius: 6px; margin: 0 0 .75rem; }
+textarea { font: inherit; width: 100%; box-sizing: border-box; }

@@ -19,6 +19,8 @@ export function Layout() {
         <strong className="marca">Campañas outbound</strong>
         <nav aria-label="Principal" className="menu">
           <NavLink to="/campanas">Campañas</NavLink>
+          {tieneRol('agente') && <NavLink to="/consola">Consola</NavLink>}
+          {tieneRol('administrador', 'supervisor') && <NavLink to="/supervision/agentes">Supervisión</NavLink>}
           {tieneRol('administrador', 'supervisor') && <NavLink to="/exclusiones">Exclusiones</NavLink>}
           <NavLink to="/cumplimiento">Cumplimiento</NavLink>
           {tieneRol('administrador') && <NavLink to="/usuarios">Usuarios</NavLink>}

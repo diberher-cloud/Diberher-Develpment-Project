@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: { '/api': { target: destino, changeOrigin: true } },
+    proxy: { '/api': { target: destino, changeOrigin: true, ws: true } },
   },
   test: {
     environment: 'jsdom',

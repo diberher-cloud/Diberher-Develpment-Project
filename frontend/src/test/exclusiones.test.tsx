@@ -140,7 +140,7 @@ describe('Exclusiones', () => {
     expect((form.get('archivo') as File).name).toBe('rne.csv');
   });
 
-  it('carga masiva: archivo no .csv o > 10 MiB se rechaza sin llamar a la API', async () => {
+  it('carga masiva: archivo que no es .csv/.xlsx o > 10 MiB se rechaza sin llamar a la API', async () => {
     iniciarSesionComo('supervisor');
     const m = simularFetch(() => respuesta(200, pag([])));
     renderizarApp('/exclusiones');
@@ -148,7 +148,7 @@ describe('Exclusiones', () => {
     const antes = m.mock.calls.length;
     const entrada = screen.getByLabelText('Archivo CSV de exclusiones (columna telefono)');
     const u = userEvent.setup({ applyAccept: false });
-    await u.upload(entrada, new File(['x'], 'lista.xlsx'));
+    await u.upload(entrada, new File(['x'], 'lista.txt'));
     expect(await screen.findByText(/extensión \.csv/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cargar' })).toBeDisabled();
     const grande = new File(['x'], 'grande.csv');
