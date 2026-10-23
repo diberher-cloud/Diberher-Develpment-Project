@@ -7,7 +7,8 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -41,6 +42,7 @@ COLUMNAS_TIPO = {
 }  # fmt: skip
 MAX_CLAVES_ADICIONALES = 20
 MAX_VALOR_ADICIONAL = 500
+MAX_LONGITUD_CLAVE = 50
 MAX_ERRORES_RESPUESTA = 100
 _LOTE = 500
 
@@ -268,6 +270,19 @@ def importar(
     propias = set(columnas_propias(tipo))
     extras = [c for c in archivo.cabeceras if c not in propias]
     incidencias: list[Incidencia] = []
+    largas = [c for c in extras if len(c) > MAX_LONGITUD_CLAVE]
+    if largas:
+        extras = [c for c in extras if len(c) <= MAX_LONGITUD_CLAVE]
+        incidencias.append(
+            Incidencia(
+                1,
+                None,
+                "COLUMNAS_ADICIONALES_IGNORADAS",
+                f"Se ignoraron {len(largas)} columnas adicionales con nombre de más de "
+                f"{MAX_LONGITUD_CLAVE} caracteres.",
+                "advertencia",
+            )
+        )
     if len(extras) > MAX_CLAVES_ADICIONALES:
         incidencias.append(
             Incidencia(
@@ -307,8 +322,12 @@ def importar(
             db, tipo, (t.numero_e164 for d in validas for _, t in d.telefonos)
         )
         existentes: dict[tuple[str, str], Cliente] = {}
-        for lote in _lotes({d.numero_documento for d in validas}):
-            for cli in db.scalars(select(Cliente).where(Cliente.numero_documento.in_(lote))):
+        for lote in _lotes({(d.tipo_documento, d.numero_documento) for d in validas}):
+            for cli in db.scalars(
+                select(Cliente).where(
+                    tuple_(Cliente.tipo_documento, Cliente.numero_documento).in_(lote)
+                )
+            ):
                 existentes[(cli.tipo_documento, cli.numero_documento)] = cli
         tels_existentes: dict[int, set[str]] = {}
         for lote in _lotes([c.id for c in existentes.values()]):
@@ -414,6 +433,13 @@ def importar(
             },
         )
         db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ErrorApp(
+            409,
+            "IMPORTACION_CONCURRENTE",
+            "Otra operación modificó los mismos datos; reintente la importación.",
+        ) from exc
     except Exception:
         db.rollback()
         raise

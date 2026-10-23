@@ -1,6 +1,7 @@
 """Error común de la API (§4.1) y manejadores globales."""
 
 import logging
+import traceback
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -64,6 +65,13 @@ def detalles_desde_pydantic(errores: list[Any], prefijo: str | None = None) -> l
     return resultado
 
 
+def registrar_error_interno(exc: BaseException) -> None:
+    """Registra solo el tipo y las líneas del traceback, NUNCA str(exc): los errores de BD
+    pueden incluir datos personales (documento, teléfono) en su mensaje."""
+    marcos = "".join(traceback.format_tb(exc.__traceback__))
+    logger.error("Error no controlado: %s\n%s", type(exc).__name__, marcos)
+
+
 def registrar_manejadores(app: FastAPI) -> None:
     @app.exception_handler(ErrorApp)
     async def _app(_req: Request, exc: ErrorApp) -> JSONResponse:
@@ -91,5 +99,5 @@ def registrar_manejadores(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _interno(_req: Request, exc: Exception) -> JSONResponse:
-        logger.error("Error no controlado: %s", type(exc).__name__, exc_info=exc)
+        registrar_error_interno(exc)
         return respuesta_error(500, "ERROR_INTERNO", "Error interno del servidor.")

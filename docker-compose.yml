@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-outbound}
       POSTGRES_DB: ${POSTGRES_DB:-outbound}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -30,6 +30,7 @@ services:
       CORS_ORIGENES: ${CORS_ORIGENES:-http://localhost:5173}
       IMPORTACION_MAX_BYTES: ${IMPORTACION_MAX_BYTES:-10485760}
       IMPORTACION_MAX_FILAS: ${IMPORTACION_MAX_FILAS:-50000}
+      EXCLUSIONES_MAX_FILAS: ${EXCLUSIONES_MAX_FILAS:-200000}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     command: >
       sh -c "alembic upgrade head &&

@@ -52,7 +52,7 @@ def ahora_utc() -> datetime:
 
 def crear_engine(url: str) -> Engine:
     """Crea un engine; en SQLite activa claves foráneas y, en memoria, usa StaticPool."""
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"hide_parameters": True}
     es_sqlite = url.startswith("sqlite")
     if es_sqlite:
         kwargs["connect_args"] = {"check_same_thread": False}

@@ -159,6 +159,11 @@ def importar(
             },
         )  # fmt: skip
         db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ErrorApp(
+            409, "EXCLUSION_CONCURRENTE", "Otra operación modificó las exclusiones; reintente."
+        ) from exc
     except Exception:
         db.rollback()
         raise

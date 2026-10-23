@@ -76,7 +76,7 @@ class CampanaCliente(Base):
     campana_id: Mapped[int] = mapped_column(
         ForeignKey("campanas.id", ondelete="CASCADE"), index=True
     )
-    cliente_id: Mapped[int] = mapped_column(ForeignKey("clientes.id"))
+    cliente_id: Mapped[int] = mapped_column(ForeignKey("clientes.id"), index=True)
     importacion_id: Mapped[int | None] = mapped_column(
         ForeignKey("importaciones.id"), nullable=True
     )

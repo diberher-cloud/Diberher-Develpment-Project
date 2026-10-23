@@ -7,6 +7,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 VERSION = "0.1.0"
+SECRETO_EJEMPLO = "cambia-esto-por-un-secreto-de-32-caracteres-o-mas"
 
 
 class Settings(BaseSettings):
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
     def _validar_secreto(self) -> "Settings":
         if self.entorno != "test" and len(self.jwt_secreto) < 32:
             raise ValueError("JWT_SECRETO debe tener al menos 32 caracteres.")
+        if self.entorno == "produccion" and self.jwt_secreto == SECRETO_EJEMPLO:
+            raise ValueError("JWT_SECRETO no puede ser el valor de ejemplo de .env.example.")
         if self.entorno == "test" and not self.jwt_secreto:
             self.jwt_secreto = "secreto-solo-para-tests-0123456789abcdef"
         return self

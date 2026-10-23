@@ -50,7 +50,11 @@ def generar(args: argparse.Namespace) -> int:
         return 2
     with bd.SessionLocal() as db:
         for anio in range(args.desde, args.hasta + 1):
-            r = generar_festivos(db, anio, usuario_id=None)
+            try:
+                r = generar_festivos(db, anio, usuario_id=None)
+            except ErrorApp as exc:
+                print(exc.mensaje, file=sys.stderr)
+                return 1
             print(f"{anio}: creados={r.creados} existentes={r.existentes}")
     return 0
 

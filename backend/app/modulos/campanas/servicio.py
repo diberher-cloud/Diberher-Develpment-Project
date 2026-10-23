@@ -97,13 +97,13 @@ def crear(db: Session, datos: CampanaCrear, usuario: Usuario) -> CampanaSalida:
     db.add(campana)
     try:
         db.flush()
+        auditoria.registrar(
+            db, "campana.crear", usuario.id, "campana", campana.id, {"tipo": campana.tipo}
+        )
+        db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise _duplicado() from exc
-    auditoria.registrar(
-        db, "campana.crear", usuario.id, "campana", campana.id, {"tipo": campana.tipo}
-    )
-    db.commit()
     return a_salida(db, campana, 0)
 
 

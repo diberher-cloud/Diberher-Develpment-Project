@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import registro_modelos  # noqa: F401  (registra los modelos en Base.metadata)
 from app.config import VERSION, get_settings
 from app.errores import registrar_manejadores
+from app.middleware import ProteccionMiddleware
 from app.modulos.auth.router import router as auth_router
 from app.modulos.campanas.router import router as campanas_router
 from app.modulos.clientes.router import router as clientes_router
@@ -18,6 +19,7 @@ from app.modulos.usuarios.router import router as usuarios_router
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="Plataforma de campañas outbound", version=VERSION)
+    app.add_middleware(ProteccionMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.lista_cors,

@@ -88,12 +88,18 @@ def actualizar_politica(
         creado_por=usuario.id,
     )
     db.add(nueva)
-    db.flush()
-    auditoria.registrar(
-        db, "politica.actualizar", usuario.id, "politica", nueva.id,
-        {"tipo_campana": tipo, "version": nueva.version},
-    )  # fmt: skip
-    db.commit()
+    try:
+        db.flush()
+        auditoria.registrar(
+            db, "politica.actualizar", usuario.id, "politica", nueva.id,
+            {"tipo_campana": tipo, "version": nueva.version},
+        )  # fmt: skip
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ErrorApp(
+            409, "POLITICA_CONCURRENTE", "Otra actualización de la política ocurrió a la vez."
+        ) from exc
     return nueva
 
 
@@ -131,7 +137,13 @@ def generar_festivos(
         {"anio": anio, "creados": creados, "existentes": len(calculados) - creados},
     )  # fmt: skip
     if confirmar:
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise ErrorApp(
+                409, "FESTIVOS_CONCURRENTE", "Otra operación generó los festivos; reintente."
+            ) from exc
     return GenerarFestivosRespuesta(
         anio=anio, creados=creados, existentes=len(calculados) - creados
     )
@@ -187,12 +199,17 @@ def evaluar(db: Session, tipo: str, momento: datetime | None) -> EvaluarRespuest
             )
         )
     }
-    # Respaldo: si la tabla no tiene NINGÚN festivo (activo o no) para un año de la ventana,
-    # se usan los festivos calculados de ese año.
+    # Respaldo: si la tabla no tiene NINGÚN festivo calculado (activo o no) para un año de la
+    # ventana, se usan los calculados de ese año. Los manuales y los calculados desactivados
+    # se respetan tal cual.
     for anio in sorted({desde.year, hasta.year}):
         hay_filas = db.scalar(
             select(Festivo.id)
-            .where(Festivo.fecha >= date(anio, 1, 1), Festivo.fecha <= date(anio, 12, 31))
+            .where(
+                Festivo.fecha >= date(anio, 1, 1),
+                Festivo.fecha <= date(anio, 12, 31),
+                Festivo.origen == "calculado",
+            )
             .limit(1)
         )
         if hay_filas is None:

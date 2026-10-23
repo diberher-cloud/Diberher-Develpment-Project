@@ -307,6 +307,9 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("campana_clientes", schema=None) as batch_op:
         batch_op.create_index(
+            batch_op.f("ix_campana_clientes_cliente_id"), ["cliente_id"], unique=False
+        )
+        batch_op.create_index(
             batch_op.f("ix_campana_clientes_campana_id"), ["campana_id"], unique=False
         )
 
@@ -343,6 +346,7 @@ def downgrade() -> None:
 
     op.drop_table("importacion_errores")
     with op.batch_alter_table("campana_clientes", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_campana_clientes_cliente_id"))
         batch_op.drop_index(batch_op.f("ix_campana_clientes_campana_id"))
 
     op.drop_table("campana_clientes")
