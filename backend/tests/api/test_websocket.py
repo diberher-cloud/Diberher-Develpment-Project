@@ -289,7 +289,12 @@ def test_notify_llega_a_un_socket_conectado():
             db.add(u)
             db.commit()
         app = create_app(Settings(_env_file=None, entorno="test", database_url=url_bd))
-        app.dependency_overrides[get_db] = lambda: fabrica()
+
+        def _sesion():
+            with fabrica() as s:
+                yield s
+
+        app.dependency_overrides[get_db] = _sesion
         with TestClient(app) as c, c.websocket_connect(url(u)) as ws:
             recibir(ws, "conexion.lista")
             time.sleep(1)  # deja que el LISTEN quede activo

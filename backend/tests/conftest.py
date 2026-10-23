@@ -32,7 +32,12 @@ PASSWORD = "ClaveSegura123"
 
 @pytest.fixture()
 def session_factory() -> Iterator[sessionmaker[Session]]:
-    engine = crear_engine("sqlite+pysqlite://")
+    # Opcional: `SUITE_DATABASE_URL=postgresql+psycopg://...` ejecuta toda la batería sobre
+    # PostgreSQL (se recrea el esquema en cada test). Por defecto, SQLite en memoria.
+    url_suite = os.environ.get("SUITE_DATABASE_URL")
+    engine = crear_engine(url_suite or "sqlite+pysqlite://")
+    if url_suite:
+        Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     from app.modulos.cumplimiento.modelos import PoliticaCumplimiento
     from app.modulos.cumplimiento.politica import politica_por_defecto
@@ -47,6 +52,8 @@ def session_factory() -> Iterator[sessionmaker[Session]]:
             )
         db.commit()
     yield fabrica
+    if url_suite:
+        Base.metadata.drop_all(engine)
     engine.dispose()
 
 
