@@ -1,0 +1,9 @@
+Tipo Documento;Número Documento;Nombre;Teléfono 1;Teléfono 2;Email;Ciudad;Número Obligación;Saldo Total;Saldo Mora;Días Mora;Fecha Vencimiento;Segmento
+CC;1.020.304.050;María Pérez;300 123 4567;601 234 5678;maria@correo.co;Bogotá;OB-001;1.500.000;250.000,50;45;15/09/2026;A
+CC;52111222;Juan Ruiz;abc;3109876543;;Cali;OB-002;$ 2.000.000;100000;30;2026-09-01;B
+CC;1020304050;María Pérez Repetida;3001234567;;;;OB-003;1;1;1;2026-09-01;
+CC;99887766;Sin Teléfono;;;;;;;;;;
+CC;11223344;Monto Malo;3201112233;;;;;1,234.56;;;;
+CC;55667788;Excluido Total;3005550000;;;;;;;;;
+
+CC;44556677;Excluido Parcial;3005550000;3007771111;;;;;;;;
