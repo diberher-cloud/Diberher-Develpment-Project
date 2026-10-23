@@ -31,7 +31,10 @@ class ResultadoEvaluacion:
 def _a_local(momento: datetime, politica: PoliticaCumplimiento) -> datetime:
     if momento.tzinfo is None or momento.utcoffset() is None:
         raise ValueError("El momento debe incluir zona horaria.")
-    return momento.astimezone(ZoneInfo(politica.zona_horaria))
+    try:
+        return momento.astimezone(ZoneInfo(politica.zona_horaria))
+    except OverflowError as exc:
+        raise ValueError("El momento está fuera del rango de fechas soportado.") from exc
 
 
 def _es_festivo_bloqueante(
@@ -77,7 +80,10 @@ def proxima_ventana(
     local = _a_local(momento, politica)
     zona = ZoneInfo(politica.zona_horaria)
     for desplazamiento in range(horizonte_dias + 1):
-        dia = local.date() + timedelta(days=desplazamiento)
+        try:
+            dia = local.date() + timedelta(days=desplazamiento)
+        except OverflowError:
+            return None
         if _es_festivo_bloqueante(dia, politica, festivos):
             continue
         for franja in politica.franjas_del_dia(DIAS[dia.weekday()]):

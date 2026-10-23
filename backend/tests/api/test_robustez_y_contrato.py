@@ -349,14 +349,15 @@ def test_operaciones_fallidas_no_dejan_auditoria_de_exito(client, h_admin, db):
 # ----------------------------------------------------------------------------------------
 
 
-def test_evaluar_festivos_no_generados_no_bloquean_segun_contrato(client, h_agente):
-    """§4.8: usa los festivos ACTIVOS DE LA TABLA; con la tabla vacía no hay festivos."""
+def test_evaluar_festivos_no_generados_usan_respaldo_calculado(client, h_agente):
+    """Decisión del orquestador: año sin filas en la tabla -> festivos calculados como respaldo."""
     r = client.post(
         "/api/v1/cumplimiento/evaluar",
         json={"tipo_campana": "venta", "momento": "2026-11-02T10:00:00-05:00"},
         headers=h_agente,
     )
-    assert r.status_code == 200 and r.json()["permitido"] is True
+    assert r.status_code == 200 and r.json()["permitido"] is False
+    assert r.json()["motivos"][0]["codigo"] == "FESTIVO"
 
 
 @pytest.mark.parametrize(

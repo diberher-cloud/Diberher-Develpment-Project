@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import Depends, Query
+from fastapi import Depends, Path, Query
 from pydantic import BaseModel
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
@@ -43,3 +43,6 @@ def paginar(
     else:
         filas = list(db.execute(paginada).all())
     return filas, total
+
+
+IdRuta = Annotated[int, Path(ge=1, le=2**31 - 1)]

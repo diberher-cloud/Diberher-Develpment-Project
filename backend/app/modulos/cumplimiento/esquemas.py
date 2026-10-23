@@ -1,7 +1,14 @@
-from datetime import date
+from datetime import UTC, date
 from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 from app.tipos import FechaHoraZ
 
@@ -58,6 +65,18 @@ class GenerarFestivosRespuesta(BaseModel):
 class EvaluarPeticion(BaseModel):
     tipo_campana: TipoCampana
     momento: AwareDatetime | None = None
+
+    @field_validator("momento")
+    @classmethod
+    def _rango(cls, v):
+        if v is not None:
+            try:
+                anio = v.astimezone(UTC).year
+            except (OverflowError, ValueError):
+                anio = 0
+            if not 1984 <= anio <= 2100:
+                raise ValueError("El momento debe estar entre los años 1984 y 2100.")
+        return v
 
 
 class MotivoSalida(BaseModel):

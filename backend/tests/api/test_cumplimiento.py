@@ -158,3 +158,34 @@ def test_permisos(client, h_supervisor, h_agente):
     assert client.get(f"{C}/politicas/venta/versiones", headers=h_agente).status_code == 403
     assert client.get("/api/v1/festivos?anio=2026", headers=h_agente).status_code == 200
     assert client.get(f"{C}/politicas", headers=h_agente).status_code == 200
+
+
+def test_evaluar_usa_festivos_calculados_si_el_anio_no_esta_generado(client, h_agente):
+    # 2029 no está en la tabla: 2029-01-01 (lunes) es festivo calculado.
+    r = evaluar(client, h_agente, "2029-01-01T10:00:00-05:00").json()
+    assert r["permitido"] is False and r["motivos"][0]["codigo"] == "FESTIVO"
+
+
+def test_evaluar_respeta_tabla_si_el_anio_tiene_filas(client, h_admin):
+    client.post("/api/v1/festivos/generar", json={"anio": 2029}, headers=h_admin)
+    fid = next(
+        f["id"] for f in client.get("/api/v1/festivos?anio=2029", headers=h_admin).json()
+        if f["fecha"] == "2029-01-01"
+    )  # fmt: skip
+    client.patch(f"/api/v1/festivos/{fid}", json={"activo": False}, headers=h_admin)
+    assert evaluar(client, h_admin, "2029-01-01T10:00:00-05:00").json()["permitido"] is True
+
+
+def test_evaluar_fechas_extremas_422(client, h_agente):
+    for m in (
+        "0001-01-01T00:00:00+00:00",
+        "9999-12-31T23:00:00-05:00",
+        "0001-01-01T00:00:00+14:00",
+    ):
+        r = evaluar(client, h_agente, m)
+        assert r.status_code == 422 and r.json()["error"]["detalles"][0]["campo"] == "momento"
+
+
+def test_ids_enormes_422(client, h_admin):
+    r = client.get(f"/api/v1/campanas/{10**25}", headers=h_admin)
+    assert r.status_code == 422 and r.json()["error"]["codigo"] == "VALIDACION"

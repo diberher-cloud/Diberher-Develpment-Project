@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -175,7 +176,8 @@ def evaluar(db: Session, tipo: str, momento: datetime | None) -> EvaluarRespuest
     fila = politica_activa(db, tipo)
     politica = PoliticaModelo.model_validate(fila.configuracion)
     momento = momento or datetime.now(UTC)
-    desde = momento.astimezone(UTC).date() - timedelta(days=1)
+    local = momento.astimezone(ZoneInfo(politica.zona_horaria))
+    desde = local.date() - timedelta(days=1)
     hasta = desde + timedelta(days=HORIZONTE_DIAS + 3)
     festivos = {
         f: n
@@ -185,6 +187,22 @@ def evaluar(db: Session, tipo: str, momento: datetime | None) -> EvaluarRespuest
             )
         )
     }
+    # Respaldo: si la tabla no tiene NINGÚN festivo (activo o no) para un año de la ventana,
+    # se usan los festivos calculados de ese año.
+    for anio in sorted({desde.year, hasta.year}):
+        hay_filas = db.scalar(
+            select(Festivo.id)
+            .where(Festivo.fecha >= date(anio, 1, 1), Festivo.fecha <= date(anio, 12, 31))
+            .limit(1)
+        )
+        if hay_filas is None:
+            try:
+                calculados = festivos_colombia(anio)
+            except ValueError:
+                continue
+            for f, n in calculados.items():
+                if desde <= f <= hasta:
+                    festivos.setdefault(f, n)
     resultado = motor.evaluar_horario(momento, politica, festivos)
     return EvaluarRespuesta(
         permitido=resultado.permitido,

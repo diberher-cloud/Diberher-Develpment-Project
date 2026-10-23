@@ -18,7 +18,7 @@ from app.modulos.importacion.esquemas import (
 )
 from app.modulos.importacion.modelos import Importacion, ImportacionError
 from app.modulos.usuarios.modelos import Usuario
-from app.paginacion import Pagina, Paginacion, paginar
+from app.paginacion import IdRuta, Pagina, Paginacion, paginar
 
 router = APIRouter(tags=["importación"])
 Gestor = Annotated[Usuario, Depends(requiere_rol("administrador", "supervisor"))]
@@ -29,7 +29,7 @@ Db = Annotated[Session, Depends(get_db)]
     "/campanas/{campana_id}/importaciones", response_model=ImportacionDetalleSalida, status_code=201
 )
 def importar(
-    campana_id: int,
+    campana_id: IdRuta,
     usuario: Gestor,
     db: Db,
     archivo: Annotated[UploadFile, File()],
@@ -41,7 +41,7 @@ def importar(
 
 @router.get("/campanas/{campana_id}/importaciones", response_model=Pagina[ImportacionSalida])
 def listar(
-    campana_id: int, _usuario: Gestor, params: Paginacion, db: Db
+    campana_id: IdRuta, _usuario: Gestor, params: Paginacion, db: Db
 ) -> Pagina[ImportacionSalida]:
     if db.get(Campana, campana_id) is None:
         raise ErrorApp(404, "NO_ENCONTRADO", "Campaña no encontrada.")
@@ -60,7 +60,7 @@ def listar(
 
 
 @router.get("/importaciones/{importacion_id}", response_model=ImportacionSalida)
-def obtener(importacion_id: int, _usuario: Gestor, db: Db) -> Importacion:
+def obtener(importacion_id: IdRuta, _usuario: Gestor, db: Db) -> Importacion:
     imp = db.get(Importacion, importacion_id)
     if imp is None:
         raise ErrorApp(404, "NO_ENCONTRADO", "Importación no encontrada.")
@@ -71,7 +71,7 @@ def obtener(importacion_id: int, _usuario: Gestor, db: Db) -> Importacion:
     "/importaciones/{importacion_id}/errores", response_model=Pagina[ErrorImportacionSalida]
 )
 def errores(
-    importacion_id: int,
+    importacion_id: IdRuta,
     _usuario: Gestor,
     params: Paginacion,
     db: Db,

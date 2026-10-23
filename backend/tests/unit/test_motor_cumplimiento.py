@@ -111,3 +111,9 @@ def test_sin_ventanas():
 def test_proxima_ventana_si_ya_permitido_devuelve_el_momento():
     m = datetime.fromisoformat("2026-10-23T10:00:00-05:00")
     assert proxima_ventana(m, POLITICA, FESTIVOS) == m
+
+
+def test_motor_extremos_lanza_valueerror_no_overflow():
+    for m in (datetime(9999, 12, 31, 23, 0, tzinfo=BOG), datetime(1, 1, 1, tzinfo=UTC)):
+        with pytest.raises(ValueError):
+            evaluar_horario(m, POLITICA, {})

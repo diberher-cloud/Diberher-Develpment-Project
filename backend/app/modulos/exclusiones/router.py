@@ -18,7 +18,7 @@ from app.modulos.exclusiones.esquemas import (
 from app.modulos.exclusiones.modelos import Exclusion
 from app.modulos.importacion.servicio import leer_subida
 from app.modulos.usuarios.modelos import Usuario
-from app.paginacion import Pagina, Paginacion
+from app.paginacion import IdRuta, Pagina, Paginacion
 
 router = APIRouter(prefix="/exclusiones", tags=["exclusiones"])
 Gestor = Annotated[Usuario, Depends(requiere_rol("administrador", "supervisor"))]
@@ -63,6 +63,6 @@ def importar(
 
 
 @router.delete("/{exclusion_id}", status_code=204)
-def eliminar(exclusion_id: int, usuario: Gestor, db: Db) -> Response:
+def eliminar(exclusion_id: IdRuta, usuario: Gestor, db: Db) -> Response:
     servicio.eliminar(db, exclusion_id, usuario)
     return Response(status_code=204)

@@ -14,7 +14,7 @@ from app.modulos.campanas.esquemas import (
     TipoCampana,
 )
 from app.modulos.usuarios.modelos import Usuario
-from app.paginacion import Pagina, Paginacion
+from app.paginacion import IdRuta, Pagina, Paginacion
 
 router = APIRouter(prefix="/campanas", tags=["campañas"])
 Cualquiera = Annotated[Usuario, Depends(usuario_actual)]
@@ -41,16 +41,18 @@ def crear(datos: CampanaCrear, usuario: Gestor, db: Db) -> CampanaSalida:
 
 
 @router.get("/{campana_id}", response_model=CampanaSalida)
-def obtener(campana_id: int, usuario: Cualquiera, db: Db) -> CampanaSalida:
+def obtener(campana_id: IdRuta, usuario: Cualquiera, db: Db) -> CampanaSalida:
     return servicio.a_salida(db, servicio.obtener(db, campana_id, usuario))
 
 
 @router.patch("/{campana_id}", response_model=CampanaSalida)
-def actualizar(campana_id: int, datos: CampanaActualizar, usuario: Gestor, db: Db) -> CampanaSalida:
+def actualizar(
+    campana_id: IdRuta, datos: CampanaActualizar, usuario: Gestor, db: Db
+) -> CampanaSalida:
     return servicio.actualizar(db, campana_id, datos, usuario)
 
 
 @router.delete("/{campana_id}", status_code=204)
-def eliminar(campana_id: int, usuario: Gestor, db: Db) -> Response:
+def eliminar(campana_id: IdRuta, usuario: Gestor, db: Db) -> Response:
     servicio.eliminar(db, campana_id, usuario)
     return Response(status_code=204)

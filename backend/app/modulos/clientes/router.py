@@ -8,14 +8,14 @@ from app.dependencias import requiere_rol
 from app.modulos.clientes import servicio
 from app.modulos.clientes.esquemas import CampanaClienteSalida
 from app.modulos.usuarios.modelos import Usuario
-from app.paginacion import Pagina, Paginacion
+from app.paginacion import IdRuta, Pagina, Paginacion
 
 router = APIRouter(tags=["clientes"])
 
 
 @router.get("/campanas/{campana_id}/clientes", response_model=Pagina[CampanaClienteSalida])
 def listar(
-    campana_id: int,
+    campana_id: IdRuta,
     _usuario: Annotated[Usuario, Depends(requiere_rol("administrador", "supervisor"))],
     params: Paginacion,
     db: Annotated[Session, Depends(get_db)],

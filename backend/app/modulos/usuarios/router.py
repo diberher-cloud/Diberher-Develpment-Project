@@ -8,7 +8,7 @@ from app.dependencias import requiere_rol
 from app.modulos.usuarios import servicio
 from app.modulos.usuarios.esquemas import Rol, UsuarioActualizar, UsuarioCrear, UsuarioSalida
 from app.modulos.usuarios.modelos import Usuario
-from app.paginacion import Pagina, Paginacion
+from app.paginacion import IdRuta, Pagina, Paginacion
 
 router = APIRouter(prefix="/usuarios", tags=["usuarios"])
 Admin = Annotated[Usuario, Depends(requiere_rol("administrador"))]
@@ -38,7 +38,7 @@ def crear(datos: UsuarioCrear, actor: Admin, db: Annotated[Session, Depends(get_
 
 @router.patch("/{usuario_id}", response_model=UsuarioSalida)
 def actualizar(
-    usuario_id: int,
+    usuario_id: IdRuta,
     datos: UsuarioActualizar,
     actor: Admin,
     db: Annotated[Session, Depends(get_db)],

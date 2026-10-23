@@ -18,6 +18,7 @@ from app.modulos.cumplimiento.esquemas import (
     TipoCampana,
 )
 from app.modulos.usuarios.modelos import Usuario
+from app.paginacion import IdRuta
 
 router = APIRouter(tags=["cumplimiento"])
 Cualquiera = Annotated[Usuario, Depends(usuario_actual)]
@@ -64,5 +65,5 @@ def crear_festivo(datos: FestivoCrear, u: Admin, db: Db):
 
 
 @router.patch("/festivos/{festivo_id}", response_model=FestivoSalida)
-def actualizar_festivo(festivo_id: int, datos: FestivoActualizar, u: Admin, db: Db):
+def actualizar_festivo(festivo_id: IdRuta, datos: FestivoActualizar, u: Admin, db: Db):
     return servicio.actualizar_festivo(db, festivo_id, datos, u)
