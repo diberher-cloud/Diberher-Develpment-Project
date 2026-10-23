@@ -1,6 +1,6 @@
 # ADR-0004: Tiempo real con WebSocket y LISTEN/NOTIFY de PostgreSQL
 
-- Estado: aceptado (implementación en fase 3)
+- Estado: aceptado (implementación **adelantada a la subfase 2A**, ver ADR-0017; eventos de WhatsApp e IA en 2B-2C, ADR-0016)
 - Fecha: 2026-10-23
 
 ## Contexto
@@ -12,6 +12,8 @@ API (webhooks de Twilio, tipificaciones) y worker del marcador.
 - Endpoint WebSocket nativo de FastAPI `GET /api/v1/ws?token=<jwt>` (el token va en query porque el
   navegador no permite cabeceras en WebSocket; se valida al conectar y se cierra con código 4401 si expira).
 - Mensajes JSON `{ "tipo": "agente.estado" | "llamada.estado" | "marcador.asignacion" | "campana.metricas", "datos": {...}, "emitido_en": "<ISO-8601 UTC>" }`.
+  (Tipos ampliados en fase 2: `consola.registro`, `conversacion.mensaje`, `conversacion.estado`,
+  `atencion.cola`, `ia.alerta`; ver `fase-2.md`.)
 - Bus entre procesos: `NOTIFY eventos, '<json>'` con payload pequeño (ids y estado; < 8000 bytes). Cada
   instancia de la API mantiene una conexión `LISTEN eventos` (psycopg 3 async) y reparte a los sockets
   según rol: agente → solo sus eventos; supervisor/admin → todos.
