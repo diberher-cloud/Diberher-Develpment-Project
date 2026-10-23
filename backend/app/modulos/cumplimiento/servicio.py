@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.errores import ErrorApp, detalles_desde_pydantic
 from app.modulos.auditoria import servicio as auditoria
+from app.modulos.clientes.modelos import Cliente
 from app.modulos.cumplimiento import motor
 from app.modulos.cumplimiento.esquemas import (
     EvaluarRespuesta,
@@ -18,7 +19,9 @@ from app.modulos.cumplimiento.esquemas import (
     MotivoSalida,
 )
 from app.modulos.cumplimiento.festivos import festivos_colombia
-from app.modulos.cumplimiento.modelos import Festivo, PoliticaCumplimiento
+from app.modulos.cumplimiento.frecuencia import Canal, IntentoPrevio
+from app.modulos.cumplimiento.modelos import Festivo, IntentoContacto, PoliticaCumplimiento
+from app.modulos.cumplimiento.motor import ResultadoEvaluacion
 from app.modulos.cumplimiento.politica import PoliticaCumplimiento as PoliticaModelo
 from app.modulos.usuarios.modelos import Usuario
 
@@ -184,10 +187,7 @@ def actualizar_festivo(
 
 
 # ---- Evaluación --------------------------------------------------------------------------------
-def evaluar(db: Session, tipo: str, momento: datetime | None) -> EvaluarRespuesta:
-    fila = politica_activa(db, tipo)
-    politica = PoliticaModelo.model_validate(fila.configuracion)
-    momento = momento or datetime.now(UTC)
+def cargar_festivos(db: Session, momento: datetime, politica: PoliticaModelo) -> dict[date, str]:
     local = momento.astimezone(ZoneInfo(politica.zona_horaria))
     desde = local.date() - timedelta(days=1)
     hasta = desde + timedelta(days=HORIZONTE_DIAS + 3)
@@ -220,7 +220,112 @@ def evaluar(db: Session, tipo: str, momento: datetime | None) -> EvaluarRespuest
             for f, n in calculados.items():
                 if desde <= f <= hasta:
                     festivos.setdefault(f, n)
-    resultado = motor.evaluar_horario(momento, politica, festivos)
+    return festivos
+
+
+def cargar_politica(db: Session, tipo: str) -> tuple[PoliticaModelo, int]:
+    fila = politica_activa(db, tipo)
+    return PoliticaModelo.model_validate(fila.configuracion), fila.version
+
+
+def historial_cliente(
+    db: Session, cliente_id: int, tipo_campana: str, desde: datetime, hasta: datetime
+) -> list[IntentoPrevio]:
+    """Intentos del cliente en campañas del MISMO tipo con `momento` en [desde, hasta]."""
+    filas = db.scalars(
+        select(IntentoContacto)
+        .where(
+            IntentoContacto.cliente_id == cliente_id,
+            IntentoContacto.tipo_campana == tipo_campana,
+            IntentoContacto.momento >= desde,
+            IntentoContacto.momento <= hasta,
+        )
+        .order_by(IntentoContacto.momento)
+    )
+    return [
+        IntentoPrevio(
+            momento=f.momento,
+            canal=f.canal,  # type: ignore[arg-type]
+            iniciado_por=f.iniciado_por,  # type: ignore[arg-type]
+            contacto_directo=f.contacto_directo,
+        )
+        for f in filas
+    ]
+
+
+def evaluar_para_cliente(
+    db: Session,
+    cliente_id: int,
+    tipo_campana: str,
+    canal: Canal,
+    momento: datetime,
+    entrante: bool = False,
+) -> tuple[ResultadoEvaluacion, int]:
+    """Horario + frecuencia con el historial real del cliente. Devuelve (resultado, versión)."""
+    politica, version = cargar_politica(db, tipo_campana)
+    zona = ZoneInfo(politica.zona_horaria)
+    local = motor._a_local(momento, politica)
+    lunes = datetime.combine(
+        local.date() - timedelta(days=local.weekday()), datetime.min.time(), tzinfo=zona
+    )
+    historial = historial_cliente(db, cliente_id, tipo_campana, lunes - timedelta(days=8), momento)
+    festivos = cargar_festivos(db, momento, politica)
+    resultado = motor.evaluar_contacto(
+        momento, canal, politica, festivos, historial, entrante=entrante
+    )
+    return resultado, version
+
+
+def registrar_intento(
+    db: Session,
+    *,
+    cliente_id: int,
+    tipo_campana: str,
+    canal: Canal,
+    iniciado_por: str,
+    momento: datetime,
+    campana_id: int | None = None,
+    campana_cliente_id: int | None = None,
+    telefono_id: int | None = None,
+    contacto_directo: bool = False,
+    resultado: str | None = None,
+    politica_version: int | None = None,
+) -> IntentoContacto:
+    """Único punto de escritura de `intentos_contacto`. No hace commit."""
+    intento = IntentoContacto(
+        cliente_id=cliente_id,
+        campana_id=campana_id,
+        campana_cliente_id=campana_cliente_id,
+        tipo_campana=tipo_campana,
+        canal=canal,
+        iniciado_por=iniciado_por,
+        telefono_id=telefono_id,
+        momento=momento,
+        contacto_directo=contacto_directo,
+        resultado=resultado,
+        politica_version=politica_version,
+    )
+    db.add(intento)
+    db.flush()
+    return intento
+
+
+def evaluar(
+    db: Session,
+    tipo: str,
+    momento: datetime | None,
+    canal: Canal = "voz",
+    cliente_id: int | None = None,
+) -> EvaluarRespuesta:
+    momento = momento or datetime.now(UTC)
+    if cliente_id is not None:
+        if db.get(Cliente, cliente_id) is None:
+            raise ErrorApp(404, "NO_ENCONTRADO", "Cliente no encontrado.")
+        resultado, version = evaluar_para_cliente(db, cliente_id, tipo, canal, momento)
+    else:
+        politica, version = cargar_politica(db, tipo)
+        festivos = cargar_festivos(db, momento, politica)
+        resultado = motor.evaluar_horario(momento, politica, festivos)
     return EvaluarRespuesta(
         permitido=resultado.permitido,
         motivos=[MotivoSalida(codigo=m.codigo, mensaje=m.mensaje) for m in resultado.motivos],
@@ -230,5 +335,5 @@ def evaluar(db: Session, tipo: str, momento: datetime | None) -> EvaluarRespuest
             if resultado.proxima_ventana_inicio
             else None
         ),
-        politica_version=fila.version,
+        politica_version=version,
     )

@@ -359,7 +359,7 @@ def test_extension_csv_en_mayusculas_y_otras_extensiones(client, h_admin):
     cid = _campana(client, h_admin)
     ok = _subir(client, h_admin, cid, CAB + "CC,100001,Ana Uno,3001230002,\n", "DATOS.CSV")
     assert ok.status_code == 201
-    for nombre in ("datos.xlsx", "datos.csv.txt", "datos", "datos.csvx"):
+    for nombre in ("datos.xls", "datos.csv.txt", "datos", "datos.csvx"):
         r = _subir(client, h_admin, cid, CAB + "CC,100002,Ana Uno,3001230003,\n", nombre)
         assert r.status_code == 422 and r.json()["error"]["codigo"] == "FORMATO_ARCHIVO_INVALIDO", (
             nombre

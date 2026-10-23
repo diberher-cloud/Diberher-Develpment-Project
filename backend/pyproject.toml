@@ -21,6 +21,9 @@ dependencies = [
     "python-multipart>=0.0.18,<0.1",
     "phonenumbers>=8.13,<9",
     "tzdata>=2024.2",
+    "twilio>=9.3,<10",
+    "openpyxl>=3.1,<3.2",
+    "defusedxml>=0.7,<0.8",
 ]
 
 [project.optional-dependencies]
@@ -46,3 +49,6 @@ extend-exclude = [".venv"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501"]

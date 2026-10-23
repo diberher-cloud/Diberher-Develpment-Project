@@ -1,23 +1,25 @@
-"""Motor de cumplimiento PURO: franjas horarias + festivos (ADR-0002).
+"""Motor de cumplimiento PURO: franjas horarias + festivos (ADR-0002) y su combinación con la
+frecuencia (`evaluar_contacto`, ADR-0012).
 
 Sin E/S ni reloj: el llamador inyecta el momento.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
+from app.modulos.cumplimiento.frecuencia import (
+    Canal,
+    IntentoPrevio,
+    Motivo,
+    evaluar_frecuencia,
+    proximo_permitido_frecuencia,
+)
 from app.modulos.cumplimiento.politica import DIAS, PoliticaCumplimiento
 
 DiaSemana = Literal["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
-
-
-@dataclass(frozen=True)
-class Motivo:
-    codigo: Literal["FESTIVO", "DIA_SIN_FRANJA", "FUERA_DE_FRANJA"]
-    mensaje: str
 
 
 @dataclass(frozen=True)
@@ -94,3 +96,51 @@ def proxima_ventana(
             if inicio <= local < fin:
                 return local
     return None
+
+
+_MAX_ITERACIONES = 5
+
+
+def evaluar_contacto(
+    momento: datetime,
+    canal: Canal,
+    politica: PoliticaCumplimiento,
+    festivos: Mapping[date, str],
+    historial: Sequence[IntentoPrevio],
+    entrante: bool = False,
+    horizonte_dias: int = 14,
+) -> ResultadoEvaluacion:
+    """Horario + frecuencia para un contacto por `canal` en `momento` (ADR-0012 §1-3)."""
+    horario = evaluar_horario(momento, politica, festivos)
+    if entrante and politica.entrantes.responder_fuera_de_franja:
+        return ResultadoEvaluacion(True, (), horario.momento_local, None)
+    if entrante:
+        return horario
+    motivos = horario.motivos + evaluar_frecuencia(momento, canal, politica, historial)
+    if not motivos:
+        return ResultadoEvaluacion(True, (), horario.momento_local, None)
+    proxima = _proxima_conjunta(momento, canal, politica, festivos, historial, horizonte_dias)
+    return ResultadoEvaluacion(False, motivos, horario.momento_local, proxima)
+
+
+def _proxima_conjunta(
+    momento: datetime,
+    canal: Canal,
+    politica: PoliticaCumplimiento,
+    festivos: Mapping[date, str],
+    historial: Sequence[IntentoPrevio],
+    horizonte_dias: int,
+) -> datetime | None:
+    """Primer instante >= momento permitido por horario y frecuencia (punto fijo, máx. 5 pasos)."""
+    t = momento
+    for _ in range(_MAX_ITERACIONES):
+        libre = proximo_permitido_frecuencia(t, canal, politica, historial, horizonte_dias)
+        if libre is None:
+            return None
+        siguiente = proxima_ventana(max(t, libre), politica, festivos, horizonte_dias)
+        if siguiente is None:
+            return None
+        if siguiente == t:
+            return t
+        t = siguiente
+    return t

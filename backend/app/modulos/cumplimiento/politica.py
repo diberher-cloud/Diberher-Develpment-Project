@@ -75,6 +75,16 @@ class Frecuencia(BaseModel):
     max_canales_semana: int = Field(ge=1, le=10)
     semana: Literal["calendario", "movil_7_dias"]
     solo_tras_contacto_directo: bool
+    contar_intentos_sin_contacto: bool = True
+
+
+class Entrantes(BaseModel):
+    """Tratamiento de los contactos iniciados por el cliente (ADR-0012 §3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    responder_fuera_de_franja: bool = True
+    establecen_contacto_directo: bool = True
 
 
 class PoliticaCumplimiento(BaseModel):
@@ -84,6 +94,7 @@ class PoliticaCumplimiento(BaseModel):
     franjas: Franjas
     permitir_festivos: bool
     frecuencia: Frecuencia
+    entrantes: Entrantes = Field(default_factory=Entrantes)
 
     @field_validator("zona_horaria")
     @classmethod
@@ -99,7 +110,7 @@ class PoliticaCumplimiento(BaseModel):
 
 
 def politica_por_defecto() -> dict:
-    """Configuración sembrada por la migración inicial (ADR-0002)."""
+    """Configuración por defecto (Fase 1 + campos nuevos de la Fase 2A, ADR-0012)."""
     semana = [{"inicio": "07:00", "fin": "19:00"}]
     return {
         "zona_horaria": "America/Bogota",
@@ -118,5 +129,10 @@ def politica_por_defecto() -> dict:
             "max_canales_semana": 1,
             "semana": "calendario",
             "solo_tras_contacto_directo": True,
+            "contar_intentos_sin_contacto": True,
+        },
+        "entrantes": {
+            "responder_fuera_de_franja": True,
+            "establecen_contacto_directo": True,
         },
     }

@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -15,6 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.catalogos import RESULTADOS, en_lista
 from app.db import Base, FechaHoraUTC, ahora_utc
 
 TIPOS_DOCUMENTO = ("CC", "CE", "NIT", "PA", "TI", "PPT")
@@ -69,7 +71,12 @@ class CampanaCliente(Base):
             "estado IN ('pendiente','en_gestion','gestionado','descartado')", name="estado"
         ),
         CheckConstraint("dias_mora IS NULL OR dias_mora >= 0", name="dias_mora"),
+        CheckConstraint(
+            "ultimo_resultado IS NULL OR " + en_lista("ultimo_resultado", RESULTADOS),
+            name="ultimo_resultado",
+        ),
         UniqueConstraint("campana_id", "cliente_id"),
+        Index("ix_campana_clientes_campana_id_estado", "campana_id", "estado"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -92,5 +99,10 @@ class CampanaCliente(Base):
     intentos: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     proximo_intento_en: Mapped[datetime | None] = mapped_column(FechaHoraUTC, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(FechaHoraUTC, default=ahora_utc)
+    # Fase 2A: reserva por agente y último resultado de gestión
+    reservado_por: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
+    reservado_hasta: Mapped[datetime | None] = mapped_column(FechaHoraUTC, nullable=True)
+    ultimo_resultado: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ultima_gestion_en: Mapped[datetime | None] = mapped_column(FechaHoraUTC, nullable=True)
 
     cliente: Mapped[Cliente] = relationship()

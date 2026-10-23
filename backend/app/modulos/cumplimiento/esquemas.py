@@ -7,12 +7,18 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    ValidationError,
     field_validator,
 )
 
+from app.modulos.cumplimiento.politica import PoliticaCumplimiento as PoliticaModelo
 from app.tipos import FechaHoraZ
 
 TipoCampana = Literal["venta", "cobranza"]
+Canal = Literal["voz", "whatsapp_mensaje", "whatsapp_llamada"]
+CodigoMotivo = Literal[
+    "FESTIVO", "DIA_SIN_FRANJA", "FUERA_DE_FRANJA", "FRECUENCIA_DIA", "FRECUENCIA_MEDIOS"
+]
 
 
 class PoliticaSalida(BaseModel):
@@ -23,6 +29,17 @@ class PoliticaSalida(BaseModel):
     version: int
     activa: bool
     configuracion: dict[str, Any]
+
+    @field_validator("configuracion")
+    @classmethod
+    def _con_valores_por_defecto(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Las versiones guardadas en Fase 1 no tienen los campos nuevos: se muestran con su
+        valor por defecto (la fila en BD no se reescribe)."""
+        try:
+            return PoliticaModelo.model_validate(v).model_dump(mode="json")
+        except ValidationError:
+            return v
+
     creado_por: int | None
     creado_en: FechaHoraZ
 
@@ -65,6 +82,8 @@ class GenerarFestivosRespuesta(BaseModel):
 class EvaluarPeticion(BaseModel):
     tipo_campana: TipoCampana
     momento: AwareDatetime | None = None
+    canal: Canal = "voz"
+    cliente_id: Annotated[int, Field(ge=1, le=2**31 - 1)] | None = None
 
     @field_validator("momento")
     @classmethod
@@ -80,7 +99,7 @@ class EvaluarPeticion(BaseModel):
 
 
 class MotivoSalida(BaseModel):
-    codigo: Literal["FESTIVO", "DIA_SIN_FRANJA", "FUERA_DE_FRANJA"]
+    codigo: CodigoMotivo
     mensaje: str
 
 

@@ -189,3 +189,103 @@ def test_evaluar_fechas_extremas_422(client, h_agente):
 def test_ids_enormes_422(client, h_admin):
     r = client.get(f"/api/v1/campanas/{10**25}", headers=h_admin)
     assert r.status_code == 422 and r.json()["error"]["codigo"] == "VALIDACION"
+
+
+# ---- Fase 2A: frecuencia y política extendida --------------------------------------------------
+def test_politicas_antiguas_se_muestran_con_valores_por_defecto(client, h_agente, db):
+    from app.modulos.cumplimiento.modelos import PoliticaCumplimiento
+
+    antigua = copy.deepcopy(politica_por_defecto())
+    del antigua["frecuencia"]["contar_intentos_sin_contacto"]
+    del antigua["entrantes"]
+    for fila in db.query(PoliticaCumplimiento):
+        fila.configuracion = antigua
+    db.commit()
+    for p in client.get(f"{C}/politicas", headers=h_agente).json():
+        assert p["configuracion"] == politica_por_defecto()
+    db.expire_all()
+    assert db.query(PoliticaCumplimiento).first().configuracion == antigua  # no se reescribe
+    # y sigue evaluando
+    assert evaluar(client, h_agente, "2026-10-23T10:00:00-05:00").json()["permitido"] is True
+
+
+def test_put_politica_con_campos_nuevos_y_rechazo_de_extras(client, h_admin):
+    cfg = copy.deepcopy(politica_por_defecto())
+    cfg["frecuencia"]["contar_intentos_sin_contacto"] = False
+    cfg["entrantes"]["responder_fuera_de_franja"] = False
+    r = client.put(f"{C}/politicas/cobranza", json=cfg, headers=h_admin)
+    assert r.status_code == 201 and r.json()["configuracion"] == cfg
+    cfg["entrantes"]["otro"] = 1
+    r = client.put(f"{C}/politicas/cobranza", json=cfg, headers=h_admin)
+    assert (
+        r.status_code == 422
+        and r.json()["error"]["detalles"][0]["campo"] == "configuracion.entrantes.otro"
+    )
+
+
+def test_put_politica_de_fase_1_sigue_valido(client, h_admin):
+    cfg = copy.deepcopy(politica_por_defecto())
+    del cfg["frecuencia"]["contar_intentos_sin_contacto"]
+    del cfg["entrantes"]
+    r = client.put(f"{C}/politicas/venta", json=cfg, headers=h_admin)
+    assert r.status_code == 201 and r.json()["configuracion"] == politica_por_defecto()
+
+
+def test_evaluar_con_cliente_incluye_frecuencia(client, h_admin, db):
+    from datetime import UTC, datetime
+
+    from app.modulos.campanas.modelos import Campana
+    from app.modulos.clientes.modelos import Cliente
+    from app.modulos.cumplimiento.modelos import IntentoContacto
+
+    cli = Cliente(tipo_documento="CC", numero_documento="777", nombre="Ana Cliente")
+    db.add(cli)
+    db.commit()
+    db.add(
+        IntentoContacto(
+            cliente_id=cli.id, tipo_campana="cobranza", canal="voz", iniciado_por="empresa",
+            momento=datetime(2026, 10, 23, 13, 0, tzinfo=UTC), contacto_directo=True,
+        )
+    )  # fmt: skip
+    db.commit()
+    cuerpo = {
+        "tipo_campana": "cobranza",
+        "momento": "2026-10-23T10:00:00-05:00",
+        "cliente_id": cli.id,
+    }
+    r = client.post(f"{C}/evaluar", json=cuerpo, headers=h_admin)
+    assert r.status_code == 200
+    assert [m["codigo"] for m in r.json()["motivos"]] == ["FRECUENCIA_DIA"]
+    assert r.json()["proxima_ventana_inicio"] == "2026-10-24T08:00:00-05:00"
+    # otro canal el sábado -> medios
+    cuerpo.update(canal="whatsapp_mensaje", momento="2026-10-24T10:00:00-05:00")
+    r = client.post(f"{C}/evaluar", json=cuerpo, headers=h_admin)
+    assert [m["codigo"] for m in r.json()["motivos"]] == ["FRECUENCIA_MEDIOS"]
+    assert r.json()["proxima_ventana_inicio"] == "2026-10-26T07:00:00-05:00"
+    # el tipo de campaña distinto no ve el intento
+    cuerpo.update(tipo_campana="venta", canal="voz", momento="2026-10-23T10:00:00-05:00")
+    assert client.post(f"{C}/evaluar", json=cuerpo, headers=h_admin).json()["permitido"] is True
+    # sin cliente_id: solo horario, como en Fase 1
+    sin = {"tipo_campana": "cobranza", "momento": "2026-10-23T10:00:00-05:00"}
+    assert client.post(f"{C}/evaluar", json=sin, headers=h_admin).json()["permitido"] is True
+    assert Campana is not None
+
+
+def test_evaluar_cliente_inexistente_canal_invalido(client, h_admin):
+    base = {"tipo_campana": "cobranza", "momento": "2026-10-23T10:00:00-05:00"}
+    assert (
+        client.post(f"{C}/evaluar", json={**base, "cliente_id": 99999}, headers=h_admin).status_code
+        == 404
+    )
+    assert (
+        client.post(f"{C}/evaluar", json={**base, "canal": "sms"}, headers=h_admin).status_code
+        == 422
+    )
+    assert (
+        client.post(f"{C}/evaluar", json={**base, "cliente_id": 0}, headers=h_admin).status_code
+        == 422
+    )
+    assert (
+        client.post(f"{C}/evaluar", json={**base, "cliente_id": 2**40}, headers=h_admin).status_code
+        == 422
+    )

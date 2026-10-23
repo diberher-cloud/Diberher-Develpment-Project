@@ -5,8 +5,16 @@ os.environ["ENTORNO"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+pysqlite://"
 os.environ["BCRYPT_COSTE"] = "4"
 os.environ.pop("JWT_SECRETO", None)
+os.environ["PUBLIC_BASE_URL"] = "https://pruebas.example.com"
+os.environ["TWILIO_AUTH_TOKEN"] = "token-de-pruebas"
+os.environ["TWILIO_NUMERO_SALIENTE"] = "+576015550000"
+os.environ["TELEFONIA_PROVEEDOR"] = "falso"
 
+import base64  # noqa: E402
+import hashlib  # noqa: E402
+import hmac  # noqa: E402
 from collections.abc import Callable, Iterator  # noqa: E402
+from datetime import UTC, datetime, timedelta  # noqa: E402
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -16,6 +24,7 @@ from app import registro_modelos  # noqa: E402,F401
 from app.db import Base, crear_engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.modulos.usuarios.modelos import Usuario  # noqa: E402
+from app.reloj import get_reloj  # noqa: E402
 from app.seguridad import crear_token, hash_password  # noqa: E402
 
 PASSWORD = "ClaveSegura123"
@@ -47,13 +56,35 @@ def db(session_factory: sessionmaker[Session]) -> Iterator[Session]:
         yield sesion
 
 
+class RelojFijo:
+    """Reloj controlado por el test. Por defecto: viernes 2026-10-23 10:15 en Bogotá."""
+
+    def __init__(self) -> None:
+        self.actual = datetime(2026, 10, 23, 15, 15, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.actual
+
+    def fijar(self, momento: datetime) -> None:
+        self.actual = momento
+
+    def avanzar(self, **kwargs: float) -> None:
+        self.actual += timedelta(**kwargs)
+
+
 @pytest.fixture()
-def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
+def reloj() -> RelojFijo:
+    return RelojFijo()
+
+
+@pytest.fixture()
+def client(session_factory: sessionmaker[Session], reloj: RelojFijo) -> Iterator[TestClient]:
     def _get_db() -> Iterator[Session]:
         with session_factory() as sesion:
             yield sesion
 
     app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_reloj] = lambda: reloj
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -112,3 +143,36 @@ def h_agente(
     crear_usuario: Callable[..., Usuario], cabeceras: Callable[[Usuario], dict[str, str]]
 ) -> dict[str, str]:
     return cabeceras(crear_usuario("agente"))
+
+
+# ---- Firma de Twilio (cálculo independiente de la implementación) ------------------------------
+BASE_URL = "https://pruebas.example.com"
+TOKEN_TWILIO = "token-de-pruebas"
+
+
+def firma_independiente(url: str, params: dict[str, str], token: str = TOKEN_TWILIO) -> str:
+    texto = url + "".join(k + params[k] for k in sorted(params))
+    return base64.b64encode(
+        hmac.new(token.encode(), texto.encode(), hashlib.sha1).digest()
+    ).decode()
+
+
+@pytest.fixture()
+def firmar_twilio() -> Callable[..., dict]:
+    """Devuelve kwargs (`data`, `headers`) listos para `client.post(ruta, **kw)`."""
+
+    def _firmar(ruta: str, params: dict[str, str], consulta: str = "", token: str = TOKEN_TWILIO):
+        url = BASE_URL + ruta + (f"?{consulta}" if consulta else "")
+        return {
+            "data": params,
+            "headers": {"X-Twilio-Signature": firma_independiente(url, params, token)},
+        }
+
+    return _firmar
+
+
+@pytest.fixture()
+def esc(db: Session, admin: Usuario):
+    from escenario import Escenario
+
+    return Escenario(db, admin.id)

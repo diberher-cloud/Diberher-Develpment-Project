@@ -59,3 +59,24 @@ def test_franjas_contiguas_permitidas():
         )
     )
     assert PoliticaCumplimiento.model_validate(cfg)
+
+
+def test_politica_de_fase_1_sigue_validando_con_valores_por_defecto():
+    antigua = politica_por_defecto()
+    del antigua["frecuencia"]["contar_intentos_sin_contacto"]
+    del antigua["entrantes"]
+    p = PoliticaCumplimiento.model_validate(antigua)
+    assert p.frecuencia.contar_intentos_sin_contacto is True
+    assert p.entrantes.responder_fuera_de_franja and p.entrantes.establecen_contacto_directo
+    assert p.model_dump(mode="json") == politica_por_defecto()
+
+
+def test_extra_forbid_en_los_niveles_nuevos():
+    cfg = politica_por_defecto()
+    cfg["entrantes"]["otro"] = True
+    with pytest.raises(ValidationError):
+        PoliticaCumplimiento.model_validate(cfg)
+    cfg = politica_por_defecto()
+    cfg["frecuencia"]["otro"] = 1
+    with pytest.raises(ValidationError):
+        PoliticaCumplimiento.model_validate(cfg)

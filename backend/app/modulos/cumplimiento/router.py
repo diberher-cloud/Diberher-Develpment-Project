@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.dependencias import requiere_rol, usuario_actual
+from app.errores import ErrorApp
 from app.modulos.cumplimiento import servicio
 from app.modulos.cumplimiento.esquemas import (
     EvaluarPeticion,
@@ -45,8 +46,10 @@ def actualizar_politica(tipo_campana: TipoCampana, configuracion: dict[str, Any]
 
 
 @router.post("/cumplimiento/evaluar", response_model=EvaluarRespuesta)
-def evaluar(datos: EvaluarPeticion, _u: Cualquiera, db: Db) -> EvaluarRespuesta:
-    return servicio.evaluar(db, datos.tipo_campana, datos.momento)
+def evaluar(datos: EvaluarPeticion, usuario: Cualquiera, db: Db) -> EvaluarRespuesta:
+    if datos.cliente_id is not None and usuario.rol == "agente":
+        raise ErrorApp(403, "PERMISO_DENEGADO", "No tiene permiso para esta operación.")
+    return servicio.evaluar(db, datos.tipo_campana, datos.momento, datos.canal, datos.cliente_id)
 
 
 @router.get("/festivos", response_model=list[FestivoSalida])

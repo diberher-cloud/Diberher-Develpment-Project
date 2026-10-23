@@ -7,6 +7,8 @@ from app.db import get_db
 from app.dependencias import requiere_rol, usuario_actual
 from app.modulos.campanas import servicio
 from app.modulos.campanas.esquemas import (
+    AgenteAsignadoSalida,
+    AsignarAgentes,
     CampanaActualizar,
     CampanaCrear,
     CampanaSalida,
@@ -56,3 +58,15 @@ def actualizar(
 def eliminar(campana_id: IdRuta, usuario: Gestor, db: Db) -> Response:
     servicio.eliminar(db, campana_id, usuario)
     return Response(status_code=204)
+
+
+@router.get("/{campana_id}/agentes", response_model=list[AgenteAsignadoSalida])
+def listar_agentes(campana_id: IdRuta, _usuario: Gestor, db: Db) -> list[AgenteAsignadoSalida]:
+    return servicio.listar_agentes(db, campana_id)
+
+
+@router.put("/{campana_id}/agentes", response_model=list[AgenteAsignadoSalida])
+def asignar_agentes(
+    campana_id: IdRuta, datos: AsignarAgentes, usuario: Gestor, db: Db
+) -> list[AgenteAsignadoSalida]:
+    return servicio.asignar_agentes(db, campana_id, datos, usuario)

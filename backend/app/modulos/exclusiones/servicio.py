@@ -7,8 +7,8 @@ from app.errores import ErrorApp, detalle
 from app.modulos.auditoria import servicio as auditoria
 from app.modulos.exclusiones.esquemas import ExclusionCrear, resolver_aplica_a
 from app.modulos.exclusiones.modelos import Exclusion
-from app.modulos.importacion.lector_csv import ErrorLector, leer_csv
-from app.modulos.importacion.servicio import a_error_app
+from app.modulos.importacion.lector_csv import ErrorLector
+from app.modulos.importacion.servicio import a_error_app, leer_archivo
 from app.modulos.importacion.telefonos import ErrorTelefono, enmascarar, normalizar_telefono
 from app.modulos.usuarios.modelos import Usuario
 from app.paginacion import ParamsPaginacion, paginar
@@ -92,11 +92,18 @@ def eliminar(db: Session, exclusion_id: int, usuario: Usuario) -> None:
 
 
 def importar(
-    db: Session, usuario: Usuario, contenido: bytes, motivo: str, aplica_a_in: str | None
+    db: Session,
+    usuario: Usuario,
+    contenido: bytes,
+    motivo: str,
+    aplica_a_in: str | None,
+    nombre_archivo: str = "exclusiones.csv",
 ) -> dict:
     aplica_a = resolver_aplica_a(motivo, aplica_a_in)
     try:
-        archivo = leer_csv(contenido, get_settings().exclusiones_max_filas, ("telefono",))
+        archivo = leer_archivo(
+            nombre_archivo, contenido, get_settings().exclusiones_max_filas, ("telefono",)
+        )
     except ErrorLector as exc:
         raise a_error_app(exc) from exc
 

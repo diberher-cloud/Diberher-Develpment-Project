@@ -66,3 +66,15 @@ class CampanaActualizar(BaseModel):
     max_intentos: MaxIntentos | None = None
     intervalo_reintento_minutos: Intervalo | None = None
     estado: EstadoCampana | None = None
+
+
+class AgenteAsignadoSalida(BaseModel):
+    usuario_id: int
+    nombre: str
+    email: str
+    activo: bool
+    asignado_en: FechaHoraZ
+
+
+class AsignarAgentes(BaseModel):
+    usuario_ids: Annotated[list[Annotated[int, Field(ge=1, le=2**31 - 1)]], Field(max_length=500)]

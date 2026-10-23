@@ -58,8 +58,8 @@ def importar(
 ) -> dict:
     # Valida `aplica_a` antes de leer el archivo.
     resolver_aplica_a(motivo, aplica_a)
-    _, contenido = leer_subida(archivo, get_settings().importacion_max_bytes)
-    return servicio.importar(db, usuario, contenido, motivo, aplica_a)
+    nombre, contenido = leer_subida(archivo, get_settings().importacion_max_bytes)
+    return servicio.importar(db, usuario, contenido, motivo, aplica_a, nombre)
 
 
 @router.delete("/{exclusion_id}", status_code=204)

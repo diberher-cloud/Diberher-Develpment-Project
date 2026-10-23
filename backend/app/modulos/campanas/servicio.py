@@ -4,11 +4,18 @@ from sqlalchemy.orm import Session
 
 from app.errores import ErrorApp, detalle
 from app.modulos.auditoria import servicio as auditoria
-from app.modulos.campanas.esquemas import CampanaActualizar, CampanaCrear, CampanaSalida
-from app.modulos.campanas.modelos import Campana
+from app.modulos.campanas.esquemas import (
+    AgenteAsignadoSalida,
+    AsignarAgentes,
+    CampanaActualizar,
+    CampanaCrear,
+    CampanaSalida,
+)
+from app.modulos.campanas.modelos import Campana, CampanaAgente
 from app.modulos.clientes.modelos import CampanaCliente
 from app.modulos.usuarios.modelos import Usuario
 from app.paginacion import ParamsPaginacion, paginar
+from app.tiempo_real import bus
 
 TRANSICIONES = {
     ("borrador", "activa"),
@@ -184,3 +191,94 @@ def eliminar(db: Session, campana_id: int, usuario: Usuario) -> None:
     db.delete(campana)
     auditoria.registrar(db, "campana.eliminar", usuario.id, "campana", campana_id)
     db.commit()
+
+
+# ---- Agentes asignados (Fase 2A, ADR-0017) -----------------------------------------------------
+def listar_agentes(db: Session, campana_id: int) -> list[AgenteAsignadoSalida]:
+    obtener(db, campana_id)
+    filas = db.execute(
+        select(CampanaAgente, Usuario)
+        .join(Usuario, Usuario.id == CampanaAgente.usuario_id)
+        .where(CampanaAgente.campana_id == campana_id)
+        .order_by(func.lower(Usuario.nombre), Usuario.id)
+    ).all()
+    return [
+        AgenteAsignadoSalida(
+            usuario_id=u.id,
+            nombre=u.nombre,
+            email=u.email,
+            activo=u.activo,
+            asignado_en=a.creado_en,
+        )
+        for a, u in filas
+    ]
+
+
+def asignar_agentes(
+    db: Session, campana_id: int, datos: AsignarAgentes, usuario: Usuario
+) -> list[AgenteAsignadoSalida]:
+    campana = obtener(db, campana_id)
+    if campana.estado == "finalizada":
+        raise ErrorApp(409, "CAMPANA_FINALIZADA", "La campaña está finalizada y no admite cambios.")
+    vistos: set[int] = set()
+    errores: list[dict] = []
+    ids: list[int] = []
+    for indice, uid in enumerate(datos.usuario_ids):
+        if uid in vistos:
+            continue
+        vistos.add(uid)
+        u = db.get(Usuario, uid)
+        if u is None or not u.activo or u.rol != "agente":
+            errores.append(detalle(f"usuario_ids.{indice}", "El usuario no es un agente activo."))
+        else:
+            ids.append(uid)
+    if errores:
+        raise ErrorApp(422, "VALIDACION", "Los datos enviados no son válidos.", errores)
+
+    actuales = {
+        a.usuario_id: a
+        for a in db.scalars(select(CampanaAgente).where(CampanaAgente.campana_id == campana_id))
+    }
+    agregados = sorted(set(ids) - set(actuales))
+    quitados = sorted(set(actuales) - set(ids))
+    try:
+        for uid in agregados:
+            db.add(CampanaAgente(campana_id=campana_id, usuario_id=uid))
+        for uid in quitados:
+            db.delete(actuales[uid])
+        liberados: list[int] = []
+        if quitados:
+            for cc in db.scalars(
+                select(CampanaCliente).where(
+                    CampanaCliente.campana_id == campana_id,
+                    CampanaCliente.reservado_por.in_(quitados),
+                )
+            ):
+                cc.reservado_por = None
+                cc.reservado_hasta = None
+                if cc.estado == "en_gestion":
+                    cc.estado = "pendiente"
+                liberados.append(cc.id)
+        if agregados or quitados:
+            auditoria.registrar(
+                db, "campana.agentes", usuario.id, "campana", campana_id,
+                {"agregados": agregados, "quitados": quitados},
+            )  # fmt: skip
+            for cc_id in liberados:
+                bus.publicar(
+                    db,
+                    "consola.registro",
+                    {"campana_id": campana_id, "campana_cliente_id": cc_id, "accion": "liberado"},
+                )
+            bus.publicar(
+                db,
+                "consola.registro",
+                {"campana_id": campana_id, "campana_cliente_id": None, "accion": "asignacion"},
+            )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ErrorApp(
+            409, "ASIGNACION_CONCURRENTE", "Otra actualización de agentes ocurrió a la vez."
+        ) from exc
+    return listar_agentes(db, campana_id)

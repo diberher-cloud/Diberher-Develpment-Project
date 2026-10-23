@@ -1,6 +1,6 @@
 """Importación síncrona de clientes desde CSV (§4.6). Una sola transacción."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -20,6 +20,7 @@ from app.modulos.exclusiones.modelos import Exclusion
 from app.modulos.importacion import normalizacion as nz
 from app.modulos.importacion.esquemas import ImportacionDetalleSalida
 from app.modulos.importacion.lector_csv import ArchivoCsv, ErrorLector, leer_csv
+from app.modulos.importacion.lector_xlsx import leer_xlsx
 from app.modulos.importacion.modelos import Importacion, ImportacionError
 from app.modulos.importacion.telefonos import (
     ErrorTelefono,
@@ -222,11 +223,29 @@ def a_error_app(exc: ErrorLector) -> ErrorApp:
     return ErrorApp(422, exc.codigo, exc.mensaje, exc.detalles)
 
 
+def es_xlsx(nombre: str) -> bool:
+    return nombre.lower().endswith(".xlsx")
+
+
+def leer_archivo(
+    nombre: str, contenido: bytes, max_filas: int, requeridas: Sequence[str]
+) -> ArchivoCsv:
+    """Lee `.csv` o `.xlsx` (según la extensión) con la misma salida."""
+    if es_xlsx(nombre):
+        return leer_xlsx(
+            contenido,
+            max_filas,
+            requeridas,
+            get_settings().importacion_max_bytes_descomprimido,
+        )
+    return leer_csv(contenido, max_filas, requeridas)
+
+
 def leer_subida(archivo: UploadFile, max_bytes: int) -> tuple[str, bytes]:
-    """Valida extensión y tamaño; devuelve (nombre, contenido)."""
+    """Valida extensión (.csv o .xlsx) y tamaño; devuelve (nombre, contenido)."""
     nombre = (archivo.filename or "").replace("\\", "/").split("/")[-1].strip()
-    if not nombre.lower().endswith(".csv"):
-        raise ErrorApp(422, "FORMATO_ARCHIVO_INVALIDO", "El archivo debe tener extensión .csv.")
+    if not nombre.lower().endswith((".csv", ".xlsx")):
+        raise ErrorApp(422, "FORMATO_ARCHIVO_INVALIDO", "El archivo debe ser .csv o .xlsx.")
     contenido = archivo.file.read(max_bytes + 1)
     if len(contenido) > max_bytes:
         raise ErrorApp(
@@ -262,7 +281,9 @@ def importar(
 ) -> ImportacionDetalleSalida:
     settings = get_settings()
     try:
-        archivo: ArchivoCsv = leer_csv(contenido, settings.importacion_max_filas, REQUERIDAS)
+        archivo: ArchivoCsv = leer_archivo(
+            nombre_archivo, contenido, settings.importacion_max_filas, REQUERIDAS
+        )
     except ErrorLector as exc:
         raise a_error_app(exc) from exc
 

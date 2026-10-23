@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, FechaHoraUTC, ahora_utc
@@ -39,3 +39,15 @@ class Campana(Base):
     actualizado_en: Mapped[datetime] = mapped_column(
         FechaHoraUTC, default=ahora_utc, onupdate=ahora_utc
     )
+
+
+class CampanaAgente(Base):
+    """Asignación de un agente a una campaña (ADR-0017)."""
+
+    __tablename__ = "campana_agentes"
+    __table_args__ = (UniqueConstraint("campana_id", "usuario_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campana_id: Mapped[int] = mapped_column(ForeignKey("campanas.id", ondelete="CASCADE"))
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), index=True)
+    creado_en: Mapped[datetime] = mapped_column(FechaHoraUTC, default=ahora_utc)

@@ -50,3 +50,17 @@ def decodificar_token(token: str) -> int | None:
         return int(claims["sub"])
     except (jwt.PyJWTError, ValueError, KeyError):
         return None
+
+
+def decodificar_token_con_exp(token: str) -> tuple[int, float] | None:
+    """Como `decodificar_token`, pero devuelve también el `exp` (epoch, segundos)."""
+    try:
+        claims = jwt.decode(
+            token,
+            get_settings().jwt_secreto,
+            algorithms=[_ALGORITMO],
+            options={"require": ["exp", "sub"]},
+        )
+        return int(claims["sub"]), float(claims["exp"])
+    except (jwt.PyJWTError, ValueError, KeyError, TypeError):
+        return None
