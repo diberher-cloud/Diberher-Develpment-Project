@@ -1,7 +1,8 @@
 """Tipificación de llamadas y listado por campaña (§4.6)."""
 
-from datetime import date, datetime, time, timedelta
-from decimal import Decimal, InvalidOperation
+import re
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -34,7 +35,6 @@ from app.modulos.telefonia.modelos import Llamada
 from app.modulos.usuarios.modelos import Usuario
 from app.paginacion import ParamsPaginacion, paginar
 
-_MAX_MONTO = Decimal("999999999999.99")
 _CENTAVOS = Decimal("0.01")
 
 
@@ -42,22 +42,32 @@ def _validacion(errores: list[dict]) -> ErrorApp:
     return ErrorApp(422, "VALIDACION", "Los datos enviados no son válidos.", errores)
 
 
+_PATRON_MONTO = re.compile(r"\d{1,12}(\.\d{1,2})?", re.ASCII)
+
+
 def _decimal_positivo(texto: str, campo: str, errores: list[dict]) -> Decimal | None:
-    try:
-        valor = Decimal(texto.strip())
-    except InvalidOperation:
-        errores.append(detalle(campo, "Debe ser un número decimal."))
+    """Monto en texto plano: hasta 12 enteros y 2 decimales, sin signo, exponente ni separadores."""
+    limpio = texto.strip()
+    if len(limpio) > 20 or not _PATRON_MONTO.fullmatch(limpio):
+        errores.append(
+            detalle(campo, "Debe ser un número positivo con hasta 12 enteros y 2 decimales.")
+        )
         return None
-    if not valor.is_finite():
-        errores.append(detalle(campo, "Debe ser un número decimal."))
-        return None
+    valor = Decimal(limpio)
     if valor <= 0:
         errores.append(detalle(campo, "Debe ser mayor que cero."))
         return None
-    if valor != valor.quantize(_CENTAVOS) or valor > _MAX_MONTO:
-        errores.append(detalle(campo, "Debe tener a lo sumo 2 decimales y un valor razonable."))
-        return None
     return valor.quantize(_CENTAVOS)
+
+
+def _en_rango(momento: datetime | None) -> bool:
+    """True si el instante es convertible a UTC y cae entre los años 1984 y 2100."""
+    if momento is None:
+        return True
+    try:
+        return 1984 <= momento.astimezone(UTC).year <= 2100
+    except (OverflowError, ValueError):
+        return False
 
 
 def _validar_presencia(datos: TipificacionCrear) -> list[dict]:
@@ -143,10 +153,17 @@ def tipificar(
         if not 2 <= len(producto) <= 120:
             errores.append(detalle("venta.producto", "Debe tener entre 2 y 120 caracteres."))
         valor_venta = _decimal_positivo(datos.venta.valor, "venta.valor", errores)
-    festivos = cumplimiento.cargar_festivos(db, datos.volver_a_llamar_en or ahora, politica)
+    rastreable = _en_rango(datos.volver_a_llamar_en)
+    festivos = cumplimiento.cargar_festivos(
+        db, datos.volver_a_llamar_en if rastreable and datos.volver_a_llamar_en else ahora, politica
+    )
     if datos.volver_a_llamar_en is not None:
         cuando = datos.volver_a_llamar_en
-        if not ahora + timedelta(minutes=5) < cuando <= ahora + timedelta(days=30):
+        if not rastreable:
+            errores.append(
+                detalle("volver_a_llamar_en", "La fecha debe estar entre los años 1984 y 2100.")
+            )
+        elif not ahora + timedelta(minutes=5) < cuando <= ahora + timedelta(days=30):
             errores.append(
                 detalle(
                     "volver_a_llamar_en",

@@ -219,6 +219,7 @@ def test_carrera_la_actualizacion_condicional_decide(
 ):
     """Dos sesiones llegan a la vez: el UPDATE condicional deja pasar solo a una."""
     otro = crear_usuario("agente")
+    esc.asignar(campana, otro)
     cc = esc.registro(campana)
     ahora = reloj()
     assert _reservar_atomico(db, cc.id, agente.id, ahora, ahora + timedelta(minutes=15)) is True

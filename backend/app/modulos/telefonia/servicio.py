@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -283,19 +283,46 @@ def finalizar(
     duracion: int | None,
     ahora: datetime,
 ) -> bool:
-    """Finalización idempotente: gana la primera señal terminal. Devuelve True si finalizó."""
+    """Finalización idempotente: gana la primera señal terminal. Devuelve True si finalizó.
+
+    El UPDATE es condicional (`estado` no terminal), así que dos señales simultáneas no pueden
+    finalizar dos veces: la perdedora ve 0 filas y no hace nada.
+    """
     if llamada.estado in ESTADOS_LLAMADA_TERMINALES:
         return False
-    llamada.estado = _estado_final(estado_proveedor, llamada.contestada_en is not None)
-    llamada.finalizada_en = ahora
+    nuevo = _estado_final(estado_proveedor, llamada.contestada_en is not None)
     if duracion is not None:
-        llamada.duracion_segundos = max(duracion, 0)
+        segundos: int | None = max(duracion, 0)
     elif llamada.contestada_en is not None:
-        llamada.duracion_segundos = max(int((ahora - llamada.contestada_en).total_seconds()), 0)
+        segundos = max(int((ahora - llamada.contestada_en).total_seconds()), 0)
+    else:
+        segundos = None
+    valores: dict[str, Any] = {"estado": nuevo, "finalizada_en": ahora}
+    if segundos is not None:
+        valores["duracion_segundos"] = segundos
+    ganada = db.execute(
+        update(Llamada)
+        .where(Llamada.id == llamada.id, Llamada.estado.not_in(ESTADOS_LLAMADA_TERMINALES))
+        .values(**valores)
+        .execution_options(synchronize_session=False)
+    )
+    if ganada.rowcount != 1:
+        db.refresh(llamada)
+        return False
+    db.refresh(llamada)
     if llamada.usuario_id is not None:
         estado_agente.fijar(db, llamada.usuario_id, "tipificando", ahora, llamada_id=llamada.id)
     _publicar_llamada(db, llamada, _campana_de(db, llamada))
     return True
+
+
+def _renovar_reserva(db: Session, llamada: Llamada, ahora: datetime) -> None:
+    """D-1: mientras la llamada siga activa, cada webhook de estado renueva la reserva."""
+    if llamada.estado in ESTADOS_LLAMADA_TERMINALES or llamada.usuario_id is None:
+        return
+    cc = db.get(CampanaCliente, llamada.campana_cliente_id)
+    if cc is not None and cc.reservado_por == llamada.usuario_id:
+        cc.reservado_hasta = ahora + timedelta(minutes=get_settings().consola_reserva_minutos)
 
 
 def _entero_opcional(valor: str | None) -> int | None:
@@ -385,6 +412,7 @@ def procesar_estado(
     if not _guardar_evento(db, llamada, call_sid, estado, secuencia, _datos_evento(params), ahora):
         db.rollback()
         return
+    _renovar_reserva(db, llamada, ahora)
     aplicar_estado(db, llamada, estado, _entero_opcional(params.get("CallDuration")), ahora)
     db.commit()
 

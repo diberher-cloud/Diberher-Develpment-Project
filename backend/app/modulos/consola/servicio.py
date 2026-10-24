@@ -3,9 +3,10 @@
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, case, func, or_, select, update
+from sqlalchemy import and_, case, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.catalogos import ESTADOS_LLAMADA_ACTIVAS
 from app.config import get_settings
 from app.errores import ErrorApp
 from app.modulos.auditoria import servicio as auditoria
@@ -191,6 +192,15 @@ def _cargar(db: Session, registro_id: int) -> tuple[CampanaCliente, Campana]:
     return cc, campana
 
 
+def _llamada_activa_de_otro(usuario_id: int):
+    """EXISTS: llamada no terminal sobre el registro de un agente distinto de `usuario_id`."""
+    return exists().where(
+        Llamada.campana_cliente_id == CampanaCliente.id,
+        Llamada.estado.in_(ESTADOS_LLAMADA_ACTIVAS),
+        Llamada.usuario_id != usuario_id,
+    )
+
+
 def _reservar_atomico(
     db: Session, registro_id: int, usuario_id: int, ahora: datetime, hasta: datetime
 ) -> bool:
@@ -203,7 +213,15 @@ def _reservar_atomico(
             or_(
                 CampanaCliente.reservado_por.is_(None),
                 CampanaCliente.reservado_por == usuario_id,
-                CampanaCliente.reservado_hasta < ahora,
+                and_(
+                    CampanaCliente.reservado_hasta < ahora,
+                    ~_llamada_activa_de_otro(usuario_id),  # D-1: sin robo en llamada larga
+                ),
+            ),
+            # F-3: la asignación se comprueba en la misma sentencia que la reserva.
+            exists().where(
+                CampanaAgente.campana_id == CampanaCliente.campana_id,
+                CampanaAgente.usuario_id == usuario_id,
             ),
         )
         .values(estado="en_gestion", reservado_por=usuario_id, reservado_hasta=hasta)
@@ -223,7 +241,16 @@ def tomar(db: Session, usuario: Usuario, registro_id: int, ahora: datetime) -> F
         raise no_disponible
     mio_vigente = reserva_vigente(cc, ahora) and cc.reservado_por == usuario.id
     if not mio_vigente:
-        if reserva_vigente(cc, ahora):
+        llamada_ajena = db.scalar(
+            select(
+                exists().where(
+                    Llamada.campana_cliente_id == cc.id,
+                    Llamada.estado.in_(ESTADOS_LLAMADA_ACTIVAS),
+                    Llamada.usuario_id != usuario.id,
+                )
+            )
+        )
+        if reserva_vigente(cc, ahora) or llamada_ajena:
             raise ErrorApp(409, "REGISTRO_RESERVADO", "El registro está reservado por otro agente.")
         if cc.intentos >= campana.max_intentos or (
             cc.proximo_intento_en is not None and cc.proximo_intento_en > ahora
@@ -248,6 +275,10 @@ def tomar(db: Session, usuario: Usuario, registro_id: int, ahora: datetime) -> F
     hasta = ahora + timedelta(minutes=get_settings().consola_reserva_minutos)
     if not _reservar_atomico(db, cc.id, usuario.id, ahora, hasta):
         db.rollback()
+        if not _asignada(
+            db, usuario.id, campana.id
+        ):  # desasignado entre la validación y la reserva
+            raise _no_asignada()
         raise ErrorApp(409, "REGISTRO_RESERVADO", "El registro está reservado por otro agente.")
     db.refresh(cc)
     auditoria.registrar(

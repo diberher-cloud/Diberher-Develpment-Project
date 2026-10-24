@@ -381,7 +381,7 @@ Objeto `AgenteAsignado`:
   → `200 [AgenteAsignado]`. Reglas: ids duplicados se ignoran; cada uno debe existir, estar activo y
   tener rol `agente` → si no `422 VALIDACION` con
   `detalles: [{"campo":"usuario_ids.1","mensaje":"El usuario no es un agente activo."}]`. Campaña
-  `finalizada` → `409 CAMPANA_FINALIZADA`. Al quitar un agente se liberan sus reservas en esa campaña.
+  `finalizada` → `409 CAMPANA_FINALIZADA`. Al quitar un agente se liberan sus reservas en esa campaña, **salvo** la del registro con una llamada activa o sin tipificar, que conserva hasta tipificar (puede cerrar la gestión pero no tomar nuevos registros) *(revisión post-QA, D-1)*.
   Auditoría `campana.agentes` con `{"agregados":[6],"quitados":[7]}`. Evento `consola.registro` con
   `accion:"asignacion"`.
 
@@ -677,7 +677,7 @@ Efectos (una transacción; `consola/efectos.py`, puro, calcula el nuevo estado d
 | resultado | `contacto_directo` | registro `estado` | `intentos` | `proximo_intento_en` | otros |
 |---|---|---|---|---|---|
 | `no_contesta` | false | `pendiente` (o `gestionado` si `intentos+1 >= max_intentos`) | +1 | `proxima_ventana(ahora + intervalo_reintento_minutos)` (solo horario) | — |
-| `numero_errado` | false | `pendiente` si queda algún teléfono no excluido; si no `descartado` | +1 | null | exclusión `numero_errado`, `aplica_a=todas` del teléfono de la llamada (si no existe), `creado_por` = agente, auditoría `exclusion.crear` |
+| `numero_errado` | false | `gestionado` si `intentos+1 >= max_intentos` *(revisión post-QA, D-2)*; si no, `pendiente` si queda algún teléfono no excluido, o `descartado` | +1 | null | exclusión `numero_errado`, `aplica_a=todas` del teléfono de la llamada (si no existe), `creado_por` = agente, auditoría `exclusion.crear` |
 | `contactado` | true | `gestionado` | +1 | null | — |
 | `promesa_pago` | true | `gestionado` | +1 | null | `promesas_pago` (`numero_cuotas=1`, `descuento_porcentaje=0`, `origen=agente`) |
 | `venta` | true | `gestionado` | +1 | null | `ventas` (`unidades=1`, `origen=agente`) |
@@ -688,6 +688,12 @@ Siempre: `ultimo_resultado`, `ultima_gestion_en`; se libera la reserva; el `inte
 llamada recibe `contacto_directo` y `resultado`; agente → `disponible`; auditoría `tipificacion.crear`
 `{tipificacion_id, llamada_id, resultado}`; eventos `agente.estado` y `consola.registro`
 (`accion:"gestionado"` si el registro queda `gestionado`/`descartado`, si no `"liberado"`).
+
+**Revisión post-QA (2A).**
+- *D-1 (robo de registro en llamada larga)*: con una llamada no terminal (`iniciando|sonando|en_curso`) sobre el registro, `tomar` por otro agente devuelve `409 REGISTRO_RESERVADO` aunque la reserva haya vencido; cada webhook de estado de una llamada activa renueva la reserva (`CONSOLA_RESERVA_MINUTOS`).
+- *F-3*: la reserva (`UPDATE` condicional) comprueba en la misma sentencia que el agente sigue asignado a la campaña; si no, `403 CAMPANA_NO_ASIGNADA`.
+- *F-2*: la finalización de una llamada es un `UPDATE … WHERE estado NOT IN (terminales)`: dos señales simultáneas finalizan una sola vez.
+- *F-4/F-5*: `promesa.monto` y `venta.valor` solo admiten `\d{1,12}(\.\d{1,2})?`; `volver_a_llamar_en` debe estar entre 1984 y 2100; ambos casos dan `422 VALIDACION` en el campo.
 
 Respuesta `201 Tipificacion`:
 ```json

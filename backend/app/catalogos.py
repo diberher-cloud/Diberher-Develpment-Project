@@ -32,6 +32,8 @@ ESTADOS_LLAMADA_TERMINALES = (
     "cancelada",
     "bloqueada",
 )
+# Estados no terminales: la llamada sigue en curso.
+ESTADOS_LLAMADA_ACTIVAS = ("iniciando", "sonando", "en_curso")
 # Estados terminales de una llamada que SÍ se realizó (exigen tipificación).
 ESTADOS_LLAMADA_TIPIFICABLES = ("completada", "ocupado", "no_contesta", "fallida", "cancelada")
 # Terminales en los que la llamada nunca fue contestada.

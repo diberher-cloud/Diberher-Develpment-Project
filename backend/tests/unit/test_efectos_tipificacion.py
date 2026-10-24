@@ -73,3 +73,10 @@ def test_volver_a_llamar():
             cuando,
             directo,
         )
+
+
+def test_numero_errado_con_intentos_agotados_es_gestionado():
+    e = calcular_efectos(entrada("numero_errado", intentos=2, quedan_telefonos_llamables=True))
+    assert (e.estado, e.intentos, e.excluir_telefono) == ("gestionado", 3, True)
+    e = calcular_efectos(entrada("numero_errado", intentos=0, max_intentos=1))
+    assert e.estado == "gestionado"

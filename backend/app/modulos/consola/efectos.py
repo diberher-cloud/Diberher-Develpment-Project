@@ -52,7 +52,12 @@ def calcular_efectos(e: EntradaEfectos) -> EfectoRegistro:
         objetivo = e.ahora + timedelta(minutes=e.intervalo_reintento_minutos)
         return EfectoRegistro("pendiente", intentos, e.proxima_ventana(objetivo) or objetivo, False)
     if r == "numero_errado":
-        estado = "pendiente" if e.quedan_telefonos_llamables else "descartado"
+        if (
+            intentos >= e.max_intentos
+        ):  # mismo estado terminal que no_contesta con intentos agotados
+            estado = "gestionado"
+        else:
+            estado = "pendiente" if e.quedan_telefonos_llamables else "descartado"
         return EfectoRegistro(estado, intentos, None, False, excluir_telefono=True)
     if r == "volver_a_llamar":
         return EfectoRegistro(

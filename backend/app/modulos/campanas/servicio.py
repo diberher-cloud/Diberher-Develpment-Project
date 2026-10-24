@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,8 @@ from app.modulos.campanas.esquemas import (
 )
 from app.modulos.campanas.modelos import Campana, CampanaAgente
 from app.modulos.clientes.modelos import CampanaCliente
+from app.modulos.consola.modelos import Tipificacion
+from app.modulos.telefonia.modelos import Llamada
 from app.modulos.usuarios.modelos import Usuario
 from app.paginacion import ParamsPaginacion, paginar
 from app.tiempo_real import bus
@@ -248,10 +250,24 @@ def asignar_agentes(
             db.delete(actuales[uid])
         liberados: list[int] = []
         if quitados:
+            # D-1: quien quita la asignación con una llamada activa o sin tipificar conserva la
+            # reserva de ese registro hasta que tipifique (puede cerrar la gestión, no tomar más).
+            protegidos = set(
+                db.scalars(
+                    select(Llamada.campana_cliente_id)
+                    .outerjoin(Tipificacion, Tipificacion.llamada_id == Llamada.id)
+                    .where(
+                        Llamada.usuario_id.in_(quitados),
+                        Llamada.estado != "bloqueada",
+                        Tipificacion.id.is_(None),
+                    )
+                )
+            )
             for cc in db.scalars(
                 select(CampanaCliente).where(
                     CampanaCliente.campana_id == campana_id,
                     CampanaCliente.reservado_por.in_(quitados),
+                    CampanaCliente.id.not_in(protegidos) if protegidos else true(),
                 )
             ):
                 cc.reservado_por = None
