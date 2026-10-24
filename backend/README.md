@@ -19,17 +19,25 @@ backend/
 │   ├── seguridad.py         # bcrypt y JWT HS256
 │   ├── dependencias.py      # usuario_actual, requiere_rol(...)
 │   ├── paginacion.py        # parámetros y respuesta paginada
-│   ├── cli.py               # crear-admin, generar-festivos
+│   ├── reloj.py             # ahora() inyectable (get_reloj; los tests lo sustituyen)
+│   ├── logging_seguro.py    # enmascara token= y ticket= en los logs de uvicorn
+│   ├── catalogos.py         # resultados, estados de agente y de llamada (enumeraciones)
+│   ├── cli.py               # crear-admin, generar-festivos, liberar-gestion
+│   ├── integraciones/       # 2A: firma de Twilio (pura) y proveedor de telefonía (twilio | falso)
+│   ├── tiempo_real/         # 2A: bus de eventos, conexiones WebSocket, escucha LISTEN, tickets
 │   └── modulos/
 │       ├── auth/            # login y me
 │       ├── usuarios/        # alta, edición y roles
-│       ├── campanas/        # campañas y máquina de estados
+│       ├── campanas/        # campañas, máquina de estados y asignación de agentes (2A)
 │       ├── clientes/        # listado de clientes de una campaña
-│       ├── importacion/     # CSV: lector, normalización, teléfonos (funciones puras) + servicio
+│       ├── importacion/     # CSV y XLSX: lectores, normalización, teléfonos (funciones puras) + servicio
 │       ├── exclusiones/     # números excluidos y carga masiva
-│       ├── cumplimiento/    # políticas, festivos, motor de horario (puro)
+│       ├── cumplimiento/    # políticas, festivos, motor de horario (puro), frecuencia (puro, 2A)
+│       ├── consola/         # 2A: estados del agente, reservas, ficha, tipificaciones y efectos (puros)
+│       ├── telefonia/       # 2A: TwiML saliente, webhooks, finalización y simulación
+│       ├── supervision/     # 2A: estado de agentes en vivo
 │       └── auditoria/       # registro de acciones sensibles
-├── alembic/                 # env.py y versions/0001_esquema_inicial.py
+├── alembic/                 # env.py y versions/0001_esquema_inicial.py, 0002_consola_y_voz.py
 ├── tests/
 │   ├── unit/                # lógica pura, sin BD
 │   ├── api/                 # endpoints con SQLite en memoria
@@ -44,7 +52,9 @@ backend/
 
 Cada módulo de dominio sigue la misma forma: `modelos.py` (SQLAlchemy), `esquemas.py` (Pydantic),
 `servicio.py` (lógica con E/S) y `router.py` (FastAPI). La lógica pura (`telefonos.py`,
-`normalizacion.py`, `lector_csv.py`, `politica.py`, `festivos.py`, `motor.py`) no accede a BD ni a red.
+`normalizacion.py`, `lector_csv.py`, `lector_xlsx.py`, `politica.py`, `festivos.py`, `motor.py`) no accede a BD ni a red.
+En 2A, también son puras: `cumplimiento/frecuencia.py`, `consola/estados.py`, `consola/efectos.py`,
+`consola/guion.py`, `telefonia/twiml.py` e `integraciones/twilio_firma.py`.
 
 ## Comandos
 
@@ -62,6 +72,9 @@ uvicorn app.main:app --reload --port 8000               # http://localhost:8000/
 
 - `crear-admin` pide la contraseña (10 a 128 caracteres) si `ADMIN_PASSWORD` está vacío.
 - `generar-festivos` es idempotente: no modifica fechas que ya existen (manuales, calculadas o desactivadas).
+- `liberar-gestion --llamada-id N --resultado no_contesta|numero_errado|contactado` es un procedimiento de soporte.
+  Tipifica como sistema una llamada que el agente no tipificó y libera su reserva. Comportamiento y límites en
+  [`docs/consola-agente.md`](../docs/consola-agente.md), sección 10.
 - La documentación interactiva de FastAPI está en `http://localhost:8000/docs`.
 
 Tests y lint:
@@ -93,12 +106,37 @@ Plantilla completa: `.env.example`.
 | `IMPORTACION_MAX_FILAS` | `50000` | Filas de datos máximas de una importación de clientes. |
 | `EXCLUSIONES_MAX_FILAS` | `200000` | Filas de datos máximas de una carga masiva de exclusiones. |
 | `ADMIN_PASSWORD` | vacío | Contraseña para `crear-admin` sin pedirla por consola. |
+| `EMPRESA_NOMBRE` | `Mi Empresa S.A.S.` | Nombre que sustituye `{{empresa}}` en el guion. |
+| `TELEFONIA_PROVEEDOR` | `falso` | `falso` (sin red ni credenciales) o `twilio`. |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | URL pública **exacta** de la API, sin barra final. Con `twilio` debe ser `https://`. La firma de los webhooks depende de ella. |
+| `TWILIO_ACCOUNT_SID` | vacío | Obligatoria con `twilio`. |
+| `TWILIO_AUTH_TOKEN` | `token-falso-solo-desarrollo` | Valida las firmas. Obligatoria con `twilio`. En `ENTORNO=produccion` no puede ser el valor de ejemplo ni vacío. |
+| `TWILIO_API_KEY_SID` | vacío | Obligatoria con `twilio`. |
+| `TWILIO_API_KEY_SECRET` | vacío | Obligatoria con `twilio`. |
+| `TWILIO_TWIML_APP_SID` | vacío | Obligatoria con `twilio`. |
+| `TWILIO_NUMERO_SALIENTE` | vacío | Número de voz en E.164 (`+57…`). Obligatoria con `twilio`. |
+| `TELEFONIA_TOKEN_TTL_SEGUNDOS` | `3600` | Vida del token del softphone. |
+| `TELEFONIA_GRABAR` | `true` | Graba la llamada y reproduce el aviso. Con `false`, no hay aviso. |
+| `TELEFONIA_AVISO_GRABACION` | texto de ejemplo | Aviso que oye el cliente. Pendiente de aprobación jurídica. |
+| `TELEFONIA_IDIOMA_VOZ` | `es-MX` | Idioma de los `<Say>`. |
+| `TELEFONIA_MENSAJE_BLOQUEO` | texto de ejemplo | Mensaje de las llamadas bloqueadas. |
+| `CONSOLA_RESERVA_MINUTOS` | `15` | Duración de la reserva de un registro (se renueva con la llamada). |
+| `CONSOLA_DESCONEXION_SEGUNDOS` | `60` | Segundos sin WebSocket tras los que un agente `disponible` o en `pausa` pasa a `desconectado`. |
+| `PROMESA_MAX_DIAS` | `60` | Días máximos para la fecha de una promesa de pago. |
+| `IMPORTACION_MAX_BYTES_DESCOMPRIMIDO` | `104857600` (100 MiB) | Tamaño descomprimido máximo de un `.xlsx`. |
+| `WS_REVALIDAR_SEGUNDOS` | `60` | Cada cuánto se revalida en un WebSocket que el usuario sigue activo y con el mismo rol. |
+| `BUS_EVENTOS` | `auto` | `auto` (PostgreSQL si `DATABASE_URL` es PostgreSQL; si no, memoria), `memoria` o `postgres`. |
 | `TEST_DATABASE_URL` | — | Solo para `pytest -m postgres`. |
+
+Con `TELEFONIA_PROVEEDOR=twilio` se exige: las variables `TWILIO_*` no vacías, `TWILIO_NUMERO_SALIENTE` en E.164 y
+`PUBLIC_BASE_URL` con `https://` (salvo `ENTORNO=test`). Ningún valor puede terminar en barra. Detalle en
+[`docs/telefonia-twilio.md`](../docs/telefonia-twilio.md#variables-de-entorno). Los cambios en el `.env` requieren
+reiniciar el proceso (la configuración está en caché).
 
 ## Endpoints
 
 Todos bajo `/api/v1`. Salvo `GET /salud` y `POST /auth/login`, requieren `Authorization: Bearer <jwt>`.
-Contratos completos en `docs/arquitectura/fase-1.md` (§4).
+Contratos completos en `docs/arquitectura/fase-1.md` (§4) y, para la subfase 2A, en `docs/arquitectura/fase-2.md` (§4).
 
 | Método y ruta | Roles |
 |---|---|
@@ -113,9 +151,43 @@ Contratos completos en `docs/arquitectura/fase-1.md` (§4).
 | `GET /cumplimiento/politicas` | cualquier usuario activo |
 | `GET /cumplimiento/politicas/{tipo}/versiones` | administrador, supervisor |
 | `PUT /cumplimiento/politicas/{tipo}` | administrador |
-| `POST /cumplimiento/evaluar` | cualquier usuario activo |
+| `POST /cumplimiento/evaluar` | cualquier usuario activo; con `cliente_id`, solo administrador y supervisor |
 | `GET /festivos?anio=`, `POST /festivos`, `PATCH /festivos/{id}` | lectura: todos; escritura: administrador |
 | `POST /festivos/generar` | administrador |
+| `GET/PUT /campanas/{id}/agentes` (2A) | administrador, supervisor |
+| `GET /campanas/{id}/tipificaciones` (2A) | administrador, supervisor |
+| `GET/PUT /consola/estado`, `GET /consola/campanas`, `GET /consola/registros`, `GET /consola/registros/{id}` (2A) | agente |
+| `POST /consola/registros/{id}/tomar`, `POST /consola/registros/{id}/soltar` (2A) | agente |
+| `GET /consola/llamadas/{id}`, `POST /consola/tipificaciones` (2A) | agente |
+| `POST /telefonia/token` (2A) | agente |
+| `POST /telefonia/twiml/saliente`, `POST /telefonia/twiml/aviso-grabacion`, `POST /telefonia/twiml/dial-terminado` (2A) | firma de Twilio (sin JWT) |
+| `POST /telefonia/webhooks/estado`, `POST /telefonia/webhooks/grabacion` (2A) | firma de Twilio (sin JWT) |
+| `POST /telefonia/simulacion/llamadas`, `POST /telefonia/simulacion/llamadas/{id}/eventos` (2A) | agente; solo con `TELEFONIA_PROVEEDOR=falso` y `ENTORNO` distinto de `produccion`; si no, 404 |
+| `GET /supervision/agentes` (2A) | administrador, supervisor |
+| `POST /ws/ticket` (2A) | cualquier usuario activo |
+| `GET /ws?ticket=<ticket>` (WebSocket, 2A) | ticket de un solo uso (30 s) |
+
+`POST /campanas/{id}/importaciones` y `POST /exclusiones/importar` aceptan `.csv` y `.xlsx` desde 2A.
+
+### Tiempo real (WebSocket, 2A)
+
+1. El cliente llama a `POST /api/v1/ws/ticket` con su Bearer → `200 {"ticket": "<aleatorio>", "expira_en": 30}`.
+   El ticket dura 30 s, es de un solo uso y se guarda su hash SHA-256 en `tickets_ws`.
+2. Abre `GET /api/v1/ws?ticket=<ticket>`. Un ticket inválido, caducado o ya usado cierra la conexión con **4401**.
+   También se cierra con 4401 al vencer el JWT con el que se pidió el ticket, o si el usuario deja de estar activo o
+   cambia de rol (revalidación cada `WS_REVALIDAR_SEGUNDOS`). La cola por conexión admite 1000 eventos; al
+   desbordarla, la conexión se cierra con **1013**.
+3. Primer mensaje: `{"tipo":"conexion.lista","datos":{"usuario_id":5,"rol":"agente"},"emitido_en":"…Z"}`.
+   El cliente envía `{"tipo":"ping"}` cada 30 s y recibe `{"tipo":"pong",…}`. Otros mensajes del cliente se ignoran.
+4. Todos los eventos tienen la forma `{"tipo", "datos", "emitido_en"}`:
+   - `agente.estado`, `llamada.estado`: a administradores, supervisores y al propio agente.
+   - `consola.registro`: a todos los conectados (solo ids).
+5. Los eventos se publican **dentro de la transacción** y se entregan solo tras confirmarla. Un rollback no emite nada.
+   Con PostgreSQL usan `pg_notify` y `LISTEN`. Con SQLite o en tests, un bus en memoria.
+6. El estado autoritativo está en la base de datos. Al reconectar, el cliente recarga por REST.
+
+Con varias instancias de la API, la desconexión por inactividad no es multiinstancia (ver
+[`docs/pendientes.md`](../docs/pendientes.md), sección 5).
 
 ## Convenciones
 
@@ -153,4 +225,16 @@ guarda el tipo de excepción y las líneas del traceback, nunca `str(exc)` (ADR-
 **Fechas.** Se guardan en UTC (`timestamptz`) y se responden con sufijo `Z`. Los campos `*_local`
 del evaluador de cumplimiento van en `America/Bogota` (`-05:00`).
 
-**Importación.** Reglas de archivo, teléfonos y códigos de fila en `docs/importacion-csv.md`.
+**Importación.** Reglas de archivo (CSV y XLSX), teléfonos y códigos de fila en `docs/importacion-csv.md`.
+
+**Telefonía, consola y cumplimiento (2A).**
+- Los webhooks y TwiML de Twilio validan `X-Twilio-Signature` antes de procesar nada. Firma ausente o incorrecta →
+  `403 FIRMA_INVALIDA`. La firma depende de `PUBLIC_BASE_URL`, que debe ser exacta.
+- Códigos de negocio nuevos (409, 422, 403): `REGISTRO_RESERVADO`, `REGISTRO_NO_DISPONIBLE`, `REGISTRO_NO_RESERVADO`,
+  `TIPIFICACION_PENDIENTE`, `AGENTE_EN_LLAMADA`, `LLAMADA_EN_CURSO`, `LLAMADA_YA_TIPIFICADA`, `LLAMADA_BLOQUEADA`,
+  `RESULTADO_INCOHERENTE`, `RESULTADO_NO_PERMITIDO`, `VOLVER_A_LLAMAR_FUERA_DE_FRANJA`, `CAMPANA_NO_ASIGNADA`,
+  `USUARIO_CON_GESTION_PENDIENTE`. La lista completa y sus casos, en `docs/arquitectura/fase-2.md` §4 y
+  `docs/consola-agente.md`.
+- Los teléfonos de `/consola/*` se devuelven enmascarados (`numero_mascara`). Nunca se devuelve un E.164 completo.
+- Las llamadas se comprueban con `evaluar_contacto` (horario y frecuencia) en el servidor, antes de cada `<Dial>`.
+  Ver [`docs/cumplimiento-frecuencia.md`](../docs/cumplimiento-frecuencia.md).

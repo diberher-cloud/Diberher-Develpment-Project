@@ -10,7 +10,10 @@ resumido al final.
 
 ## Estado
 
-**Fase 1 terminada**: probada y aprobada por la revisión. Incluye:
+**Fase 1 y subfase 2A terminadas**: probadas y aprobadas por la revisión. La subfase 2A es la consola del agente
+humano con voz Twilio. Las subfases 2B a 2F están pendientes. Ver [`docs/arquitectura/fase-2.md`](docs/arquitectura/fase-2.md) §0.
+
+**Fase 1** incluye:
 
 - Autenticación con JWT y roles `administrador`, `supervisor` y `agente`; gestión de usuarios.
 - Campañas `venta` y `cobranza` con máquina de estados.
@@ -21,8 +24,21 @@ resumido al final.
   evaluación.
 - Auditoría de acciones sensibles.
 
-**Sin telefonía todavía**: no hay Twilio, consola del agente, marcador, WebSocket ni reportes. La frecuencia
-de contacto (Ley 2300) se guarda en la política, pero no se evalúa. Ver [`docs/pendientes.md`](docs/pendientes.md).
+**Subfase 2A** incluye:
+
+- Asignación de agentes a campañas, estado del agente con historial y lista de trabajo con reservas de 15 minutos.
+- Llamadas manuales desde el navegador (softphone de Twilio o falso). El servidor aplica horario, festivos,
+  exclusiones y frecuencia antes de marcar. Guía: [`docs/telefonia-twilio.md`](docs/telefonia-twilio.md).
+- Tipificaciones con sus efectos: promesas, ventas, exclusión por número errado y rellamadas. Guía:
+  [`docs/consola-agente.md`](docs/consola-agente.md).
+- Frecuencia de contacto de la Ley 2300 evaluada en cada llamada. Las lecturas jurídicas están pendientes de
+  validación: [`docs/cumplimiento-frecuencia.md`](docs/cumplimiento-frecuencia.md).
+- Supervisión en vivo por WebSocket (con tickets de un solo uso).
+- Importación de clientes y de exclusiones desde `.csv` y `.xlsx`.
+
+**Pendiente de validar con Twilio real**: la llamada a un móvil, la firma a través de un túnel y el aviso de
+grabación. Sin credenciales, toda la consola se prueba con el proveedor falso. No hay marcador automático ni
+reintentos (Fase 3). Ver [`docs/pendientes.md`](docs/pendientes.md), sección 5.
 
 ## Requisitos
 
@@ -56,6 +72,11 @@ Al arrancar, el backend ejecuta `alembic upgrade head` y `generar-festivos` (202
 | Interfaz | http://localhost:5173 | Inicie sesión con el administrador creado. |
 | API | http://localhost:8000/api/v1/salud | Documentación interactiva en `/docs`. |
 | PostgreSQL | `127.0.0.1:5432` | Publicado solo en localhost. |
+
+> **Telefonía con Docker.** `docker-compose.yml` no pasa las variables de telefonía (`TELEFONIA_*`, `TWILIO_*`,
+> `PUBLIC_BASE_URL`, `CONSOLA_*`, etc.) al servicio `backend`. Con el proveedor falso no hace falta nada. Para usar
+> Twilio con Docker, añádalas a `environment` del servicio `backend` o copie el `.env` a `backend/`. Ver
+> [`docs/telefonia-twilio.md`](docs/telefonia-twilio.md#variables-de-entorno).
 
 Para reiniciar la base de datos desde cero (incluidos los datos): `docker compose down -v`.
 
@@ -95,6 +116,38 @@ Un `.env` no basta, porque `vite.config.ts` lee el valor de `process.env`.
 
 Variables de entorno del backend: [`backend/README.md`](backend/README.md#variables-de-entorno).
 
+Variables nuevas de la subfase 2A (todas en `.env.example`): `TELEFONIA_PROVEEDOR` (por defecto `falso`),
+`PUBLIC_BASE_URL`, las `TWILIO_*`, las `TELEFONIA_*`, `CONSOLA_RESERVA_MINUTOS`, `CONSOLA_DESCONEXION_SEGUNDOS`,
+`PROMESA_MAX_DIAS`, `IMPORTACION_MAX_BYTES_DESCOMPRIMIDO`, `WS_REVALIDAR_SEGUNDOS` y `BUS_EVENTOS`. Con el proveedor
+falso no hace falta configurar ninguna de ellas. Para Twilio real, ver [`docs/telefonia-twilio.md`](docs/telefonia-twilio.md).
+
+## Probar la consola con el proveedor falso
+
+Sin Twilio, sin credenciales y sin red. Es el modo por defecto (`TELEFONIA_PROVEEDOR=falso`) y no funciona con
+`ENTORNO=produccion`, porque los endpoints de simulación no existen allí.
+
+1. Arranque el sistema (con Docker o sin Docker, según la sección anterior) y cree el administrador.
+2. Como administrador, en **Usuarios**, cree un usuario con rol `agente`.
+3. Cree una campaña `venta` o `cobranza`. Importe un `.csv` o `.xlsx` con clientes y teléfonos móviles válidos.
+   Active la campaña con `PATCH /api/v1/campanas/{id}` y el cuerpo `{"estado": "activa"}`. Activar exige al menos
+   un cliente.
+4. En el detalle de la campaña, pestaña **Agentes**, seleccione el agente y guarde.
+5. Inicie sesión como agente. En **Consola**, cambie el estado a **Disponible**.
+6. En la lista de trabajo, pulse **Tomar** en un registro. Aparece la ficha.
+7. Pulse **Llamar a +57…** junto al teléfono. El servidor evalúa horario y frecuencia:
+   - Dentro de franja (lunes a viernes de 07:00 a 19:00, sábado de 08:00 a 15:00, hora de Bogotá, sin festivo),
+     la llamada se permite. Aparecen **Contesta**, **No contesta** y **Ocupado**.
+   - Fuera de franja, la llamada queda **bloqueada** y la barra muestra `FUERA_DE_FRANJA`. Es el comportamiento
+     esperado, no un error. Pruebe otra hora para la llamada permitida.
+8. Pulse **Contesta** y después **Colgar**. Aparece el formulario de tipificación.
+9. Tipifique, por ejemplo, **Promesa de pago** (cobranza) o **Contactado**. El registro queda gestionado y el
+   agente vuelve a **Disponible**.
+10. Como supervisor o administrador, abra **Supervisión** para ver el estado en vivo de los agentes.
+
+Mismo flujo por API: `POST /api/v1/telefonia/simulacion/llamadas` con `{"campana_cliente_id": 15, "telefono_id": 21}`,
+y después `POST /api/v1/telefonia/simulacion/llamadas/{id}/eventos` con `{"evento": "contestada"}`. Documentación
+interactiva en `http://localhost:8000/docs`.
+
 ## Tests y lint
 
 | Parte | Comando | Notas |
@@ -108,7 +161,13 @@ Variables de entorno del backend: [`backend/README.md`](backend/README.md#variab
 
 ## Documentación
 
-- [`docs/importacion-csv.md`](docs/importacion-csv.md): formato del CSV de importación, reglas, límites y códigos de error.
+- [`docs/telefonia-twilio.md`](docs/telefonia-twilio.md): cómo funciona la voz, configuración de Twilio paso a paso,
+  variables, proveedor falso y firma de webhooks.
+- [`docs/consola-agente.md`](docs/consola-agente.md): guía de la consola para agentes y supervisores, tipificaciones,
+  supervisión y procedimiento de soporte `liberar-gestion`.
+- [`docs/cumplimiento-frecuencia.md`](docs/cumplimiento-frecuencia.md): horario, festivos y frecuencia de la Ley 2300
+  (documento para el área jurídica).
+- [`docs/importacion-csv.md`](docs/importacion-csv.md): formato de importación (CSV y Excel), reglas, límites y códigos de error.
 - [`docs/pendientes.md`](docs/pendientes.md): validación legal pendiente, supuestos a confirmar y deuda para próximas fases.
 - [`backend/README.md`](backend/README.md) y [`frontend/README.md`](frontend/README.md): estructura, comandos y convenciones.
 - [`CHANGELOG.md`](CHANGELOG.md): cambios por versión.
@@ -127,15 +186,29 @@ Variables de entorno del backend: [`backend/README.md`](backend/README.md#variab
   - [ADR-0007](docs/arquitectura/adr-0007-normalizacion-telefonos-e164.md): normalización de teléfonos a E.164.
   - [ADR-0008](docs/arquitectura/adr-0008-proteccion-datos-personales.md): protección de datos personales.
   - [ADR-0009](docs/arquitectura/adr-0009-marcador-preview-progresivo.md): marcador preview y progresivo.
+  - [ADR-0010](docs/arquitectura/adr-0010-proveedor-whatsapp-twilio.md): proveedor de WhatsApp con Twilio (2B).
+  - [ADR-0011](docs/arquitectura/adr-0011-modelo-omnicanal.md): modelo omnicanal (2B).
+  - [ADR-0012](docs/arquitectura/adr-0012-cumplimiento-omnicanal.md): cumplimiento omnicanal, frecuencia y canales (2A y 2B-2E).
+  - [ADR-0013](docs/arquitectura/adr-0013-webhooks-y-cola-de-trabajos.md): webhooks firmados, idempotencia y cola de trabajos.
+  - [ADR-0014](docs/arquitectura/adr-0014-agente-ia-arquitectura-claude.md): arquitectura del agente IA con Claude (2C).
+  - [ADR-0015](docs/arquitectura/adr-0015-agente-ia-autonomia-y-salvaguardas.md): autonomía y salvaguardas del agente IA (2C).
+  - [ADR-0016](docs/arquitectura/adr-0016-traspaso-humano-y-supervision.md): traspaso a humano y supervisión (2C).
+  - [ADR-0017](docs/arquitectura/adr-0017-consola-agente-y-tipificaciones.md): consola del agente, reservas y tipificaciones (2A).
+  - [ADR-0018](docs/arquitectura/adr-0018-evaluacion-agente-ia.md): evaluación del agente IA (2C).
 
 ## Plan por fases
 
 | Fase | Contenido | Estado |
 |---|---|---|
 | 1 | Cimientos sin telefonía: auth con roles, campañas, importación CSV, exclusiones, cumplimiento (franjas y festivos) y auditoría. | Terminada |
-| 2 | Consola del agente, llamada manual (preview básico) con Twilio, importación desde Excel y tipificaciones. | Pendiente |
-| 3 | Marcador automático (preview y progresivo), reintentos, frecuencia de la Ley 2300 y WebSocket. | Pendiente |
-| 4 | Supervisión en tiempo real, reportes y exportación CSV, escucha de grabaciones. | Pendiente |
+| 2A | Consola del agente, llamada manual con Twilio (o falsa), tipificaciones, frecuencia de la Ley 2300, WebSocket e importación Excel. Ver [`fase-2.md`](docs/arquitectura/fase-2.md) §1-§6. | Terminada |
+| 2B | WhatsApp base y bandeja humana (webhooks firmados, cola de trabajos, plantillas, opt-in). Ver [`fase-2.md`](docs/arquitectura/fase-2.md) §7.1. | Pendiente |
+| 2C | Agente IA en WhatsApp con Claude: negociación dentro de límites, traspaso a humano, kill switch. Ver §7.2. | Pendiente |
+| 2D | Campañas outbound de WhatsApp con cumplimiento por destinatario. Ver §7.3. | Pendiente |
+| 2E | Llamadas de voz por WhatsApp (permiso de llamada, entrantes). Ver §7.4. | Pendiente |
+| 2F | Operación y endurecimiento: retención, evaluación programada, reportes de IA y seguridad. Ver §7.5. | Pendiente |
+| 3 | Marcador automático (preview y progresivo) y reintentos. | Pendiente |
+| 4 | Reportes y exportación CSV, supervisión avanzada, escucha de grabaciones. | Pendiente |
 | 5 | Predictivo, multicanal, webservice del RNE, retención de datos y SSO. | Opcional |
 
 Detalle en [`docs/arquitectura/README.md`](docs/arquitectura/README.md) (§8).

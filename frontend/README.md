@@ -1,7 +1,8 @@
 # Frontend — interfaz de la plataforma outbound
 
-SPA en React 18 + TypeScript + Vite, sin librerías de componentes ni de estado (Fase 1). Consume la API
-de `backend/` bajo `/api/v1`. La visión general está en el [README raíz](../README.md).
+SPA en React 18 + TypeScript + Vite, sin librerías de componentes ni de estado. Consume la API de `backend/`
+bajo `/api/v1`. Desde la subfase 2A incluye la consola del agente, el softphone (`@twilio/voice-sdk`, versión
+`^2.18.5` en `package.json`) y el tiempo real por WebSocket. La visión general está en el [README raíz](../README.md).
 
 Requisitos: Node 22 LTS.
 
@@ -25,12 +26,20 @@ frontend/
     ├── auth/
     │   ├── AuthContext.tsx  # sesión en memoria, login y cierre de sesión
     │   └── RutaProtegida.tsx# exige sesión y, si se indica, un rol
+    ├── tiempo_real/         # 2A: conexion.ts (WebSocket, ticket, reconexión, ping) y TiempoRealContext.tsx
+    ├── telefonia/           # 2A: softphone.ts (interfaz), softphoneTwilio.ts, softphoneFalso.ts, crearSoftphone.ts
     ├── componentes/         # Layout, Campo, Cargando, MensajeError, Paginador, SelectorCsv,
     │                        # ImportarClientes, ResumenImportacion
+    │   ├── consola/         # 2A: SelectorEstado, ListaTrabajo, FichaCliente, Guion, BarraLlamada,
+    │   │                    #     FormularioTipificacion, HistorialGestiones
+    │   ├── CampanaAgentes.tsx        # 2A: pestaña Agentes del detalle de campaña
+    │   └── TipificacionesCampana.tsx # 2A: pestaña Tipificaciones del detalle de campaña
     ├── paginas/             # Login, Campanas, CampanaFormulario, CampanaDetalle, ImportacionDetalle,
     │                        # Exclusiones, Cumplimiento, Usuarios
-    ├── utilidades/          # formato.ts (COP, fechas, offset -05:00), campanas.ts, useCarga.ts
-    └── test/                # Vitest + Testing Library; fetch simulado
+    │                        # 2A: Consola (agente), SupervisionAgentes (administrador y supervisor)
+    ├── utilidades/          # formato.ts (COP, fechas, offset -05:00), campanas.ts, useCarga.ts,
+    │                        # consola.ts (etiquetas de estados y llamadas), tipificacion.ts (resultados)
+    └── test/                # Vitest + Testing Library; fetch simulado; WebSocket y Device simulados
 ```
 
 ## Rutas
@@ -40,10 +49,14 @@ frontend/
 | `/login` | público |
 | `/campanas`, `/campanas/:id`, `/cumplimiento` | cualquier usuario con sesión |
 | `/campanas/nueva`, `/campanas/:id/editar`, `/importaciones/:id`, `/exclusiones` | administrador y supervisor |
+| `/supervision/agentes` (2A) | administrador y supervisor |
+| `/consola` (2A) | agente |
 | `/usuarios` | administrador |
 
-Cualquier otra ruta redirige a `/campanas`. Un agente solo ve campañas activas y el cumplimiento; las
-pantallas de gestión no están disponibles para él.
+Cualquier otra ruta redirige a `/campanas`. Un agente solo ve campañas activas, el cumplimiento y la consola; las
+pantallas de gestión no están disponibles para él. En el menú, **Consola** aparece solo para agentes y
+**Supervisión** solo para administradores y supervisores. El detalle de campaña (`/campanas/:id`) tiene las
+pestañas **Clientes**, **Agentes** y **Tipificaciones**. Las dos últimas son para administrador y supervisor.
 
 ## Comandos
 
@@ -71,6 +84,10 @@ VITE_PROXY_TARGET=http://localhost:8001 npm run dev
 
 Con Docker Compose, el servicio `frontend` lo recibe del `.env` de la raíz y apunta a `http://backend:8000`.
 
+El proxy de `/api` reenvía también el WebSocket (`ws: true` en `vite.config.ts`), que el cliente abre en
+`/api/v1/ws?ticket=…`. Las variables de telefonía del backend no pasan por el frontend. Ver
+[`docs/telefonia-twilio.md`](../docs/telefonia-twilio.md).
+
 ## Convenciones
 
 - **Errores de la API.** `cliente.ts` convierte la respuesta de error común (`{ "error": { codigo,
@@ -82,5 +99,19 @@ Con Docker Compose, el servicio `frontend` lo recibe del `.env` de la raíz y ap
   zona del navegador (`momentoBogota` en `utilidades/formato.ts`).
 - **Accesibilidad.** Cada campo tiene `label` asociado, los errores usan `role="alert"` y las tablas usan
   `<th scope>`.
-- **Importación de CSV.** `SelectorCsv` usa `accept=".csv"` y avisa si el archivo supera 10 MiB antes de
+- **Importación de CSV y Excel.** `SelectorCsv` usa `accept=".csv,.xlsx"` y avisa si el archivo supera 10 MiB antes de
   enviarlo. Las reglas completas del archivo están en `docs/importacion-csv.md`.
+- **Tiempo real (2A).** `conexion.ts` pide un ticket con `POST /ws/ticket` antes de **cada** intento de conexión y
+  abre `/api/v1/ws?ticket=…`. Reconecta con espera exponencial de 1 s a 30 s y envía `ping` cada 30 s. Ante un
+  cierre 4401 pide un ticket nuevo **una vez**; si vuelve a fallar, cierra la sesión. Al reconectar, la interfaz
+  recarga el estado por REST, porque la base de datos es la fuente de verdad. `useEventoTiempoReal(tipo, handler)`
+  reparte los eventos por tipo.
+- **Softphone (2A).** `crearSoftphone` elige la implementación según `proveedor` del token: `falso` →
+  `SoftphoneFalso` (sin audio; usa los endpoints de simulación), `twilio` → `SoftphoneTwilio` (carga
+  `@twilio/voice-sdk` de forma diferida). El softphone de Twilio no llama a `device.register()` y renueva el token
+  en `tokenWillExpire`. Con el proveedor falso, la barra de llamada muestra los botones **Contesta**,
+  **No contesta** y **Ocupado** (solo en desarrollo).
+- **Números en la consola (2A).** La interfaz solo muestra `numero_mascara` (`+57300****567`). El navegador envía
+  ids (`campana_cliente_id`, `telefono_id`) y el servidor resuelve el número.
+- **Accesibilidad de la consola (2A).** El estado de la llamada se anuncia con `role="status"` y
+  `aria-live="polite"`. Los errores usan `role="alert"`.

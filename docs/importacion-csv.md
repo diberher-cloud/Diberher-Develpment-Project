@@ -1,14 +1,15 @@
-# Importación de clientes desde CSV
+# Importación de clientes desde CSV y Excel
 
-Guía de referencia del formato de archivo que acepta `POST /api/v1/campanas/{id}/importaciones`
-(Fase 1). Las reglas están implementadas en `backend/app/modulos/importacion/` (`lector_csv.py`,
-`normalizacion.py`, `telefonos.py`, `servicio.py`) y en las constantes de `servicio.py`.
+Guía de referencia del formato de archivo que acepta `POST /api/v1/campanas/{id}/importaciones`.
+Acepta **`.csv`** (Fase 1) y **`.xlsx`** (subfase 2A, ver [Excel (.xlsx)](#excel-xlsx)). Las reglas están
+implementadas en `backend/app/modulos/importacion/` (`lector_csv.py`, `lector_xlsx.py`, `normalizacion.py`,
+`telefonos.py`, `servicio.py`) y en las constantes de `servicio.py`.
 
 Índice: [Columnas](#columnas) · [Documentos](#documentos) · [Teléfonos](#teléfonos) ·
 [Montos y fechas](#montos-y-fechas) · [Codificación y delimitadores](#codificación-y-delimitadores) ·
-[Límites](#límites) · [Deduplicación](#deduplicación) · [Exclusiones](#exclusiones-por-tipo-de-campaña) ·
-[Resultado y conteos](#resultado-y-conteos) · [Códigos de error](#códigos-de-error) ·
-[Ejemplos](#ejemplos) · [Exclusiones masivas (RNE)](#carga-masiva-de-exclusiones-rne)
+[Excel (.xlsx)](#excel-xlsx) · [Límites](#límites) · [Deduplicación](#deduplicación) ·
+[Exclusiones](#exclusiones-por-tipo-de-campaña) · [Resultado y conteos](#resultado-y-conteos) ·
+[Códigos de error](#códigos-de-error) · [Ejemplos](#ejemplos) · [Exclusiones masivas (RNE)](#carga-masiva-de-exclusiones-rne)
 
 ---
 
@@ -16,7 +17,8 @@ Guía de referencia del formato de archivo que acepta `POST /api/v1/campanas/{id
 
 - Endpoint: `POST /api/v1/campanas/{id}/importaciones`, `multipart/form-data` con el campo `archivo`.
 - Roles: `administrador` y `supervisor`. Un agente recibe `403 PERMISO_DENEGADO`.
-- El archivo debe tener extensión `.csv` (sin distinguir mayúsculas).
+- El archivo debe tener extensión `.csv` o `.xlsx` (sin distinguir mayúsculas). Cualquier otra, incluidas
+  `.xls` y `.xlsm`, responde `422 FORMATO_ARCHIVO_INVALIDO` con el mensaje «El archivo debe ser .csv o .xlsx.».
 - La importación es **síncrona** y ocurre en **una sola transacción**: si hay un error inesperado
   se hace rollback y no queda ninguna importación parcial.
 
@@ -24,6 +26,11 @@ Guía de referencia del formato de archivo que acepta `POST /api/v1/campanas/{id
 curl -X POST http://localhost:8000/api/v1/campanas/1/importaciones \
   -H "Authorization: Bearer $TOKEN" \
   -F "archivo=@cobranza_octubre.csv;type=text/csv"
+
+# Excel
+curl -X POST http://localhost:8000/api/v1/campanas/1/importaciones \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "archivo=@cobranza_octubre.xlsx;type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ```
 
 ---
@@ -174,6 +181,91 @@ Máximo: `999999999999.99` (columna `NUMERIC(14,2)`).
 
 ---
 
+## Excel (.xlsx)
+
+Desde la subfase 2A, la importación de clientes y la carga masiva de exclusiones aceptan archivos `.xlsx`.
+Después de leerlos, el procesamiento (normalización, deduplicación, exclusiones y conteos) es **el mismo que
+para CSV**: las mismas cabeceras, los mismos códigos de fila y los mismos límites de filas.
+
+### Qué se lee
+
+- **Hoja:** la **primera hoja del libro** (según el orden de las hojas, no su nombre). Las demás se ignoran.
+- **Cabeceras:** la primera fila que tiene contenido. Las filas vacías que la preceden se ignoran. Las cabeceras
+  se normalizan como en CSV, y las vacías se ignoran.
+- **Filas de datos:** el resto de filas con contenido. Las filas totalmente vacías, también las intermedias,
+  se ignoran.
+- **Número de fila** en los errores: el número de fila de la hoja de Excel, contando también las filas vacías.
+  Coincide con lo que se ve en Excel si la hoja empieza en A1.
+
+### Cómo se convierte cada celda
+
+Antes de validar, cada celda se convierte a texto. La validación posterior es la de CSV.
+
+| Contenido de la celda | Texto que recibe la validación | Ejemplo |
+|---|---|---|
+| Vacía | cadena vacía | — |
+| Texto | recortado (sin espacios al inicio ni al final) | `" María Pérez "` → `María Pérez` |
+| Booleano | `true` o `false` | `TRUE` → `true` |
+| Número entero | sus dígitos | `3001234567` → `3001234567` |
+| Número decimal que es entero (Excel lo guarda así a veces) | parte entera | `3001234567.0` → `3001234567` |
+| Otro número | su representación decimal | `1500.5` → `1500.5`; `1234.56` → `1234.56` |
+| Fecha sin hora (medianoche) | `AAAA-MM-DD` | `15/09/2026` (fecha de Excel) → `2026-09-15` |
+| Fecha con hora | ISO 8601 | `2026-09-15 10:30` → `2026-09-15T10:30:00` |
+
+Notas:
+
+- **Números y montos.** Se usa el **valor almacenado** de la celda, no su formato de visualización. Un
+  `1500000` con formato `$ 1.500.000` llega como `1500000`, que es válido. Un monto escrito como texto
+  (`$ 1.500.000`) sigue las reglas de [Montos y fechas](#montos-y-fechas). Los números en notación científica
+  (`1.5E+20`) no son válidos.
+- **Fechas.** `fecha_vencimiento` acepta una fecha sin hora, como celda de fecha o como texto `DD/MM/YYYY`.
+  Una fecha **con hora** no es válida: responde `FECHA_INVALIDA`. Con la celda de fecha de Excel, la hora
+  debe estar vacía.
+- **Teléfonos.** Un teléfono escrito como número (`3001234567`) es válido. Para los formatos de
+  [Teléfonos](#teléfonos), basta con que las cifras sean las correctas.
+- **Fórmulas.** Se lee el **último valor calculado guardado** en el archivo. Si la celda no tiene valor guardado
+  (el archivo no se recalculó al guardarse), queda vacía. La plataforma no recalcula fórmulas.
+
+### Límites y protecciones
+
+| Protección | Valor | Respuesta si se supera |
+|---|---|---|
+| Tamaño del archivo | `IMPORTACION_MAX_BYTES` (10 MiB), el mismo que para CSV | `413 ARCHIVO_DEMASIADO_GRANDE`, incluso antes de autenticar |
+| Tamaño descomprimido declarado en el ZIP del `.xlsx` | `IMPORTACION_MAX_BYTES_DESCOMPRIMIDO` (100 MiB) | `422 ARCHIVO_INVALIDO` («El archivo Excel descomprimido excede el tamaño permitido.») |
+| Archivo que no es un `.xlsx` válido (no es un ZIP, o el libro no se puede abrir) | — | `422 ARCHIVO_INVALIDO` («No se pudo leer el archivo Excel.») |
+| Filas de datos | `IMPORTACION_MAX_FILAS` (50 000); exclusiones: `EXCLUSIONES_MAX_FILAS` (200 000) | `422 DEMASIADAS_FILAS` |
+| Sin filas de datos | — | `422 ARCHIVO_VACIO` |
+| Faltan columnas obligatorias | — | `422 COLUMNAS_FALTANTES` |
+
+Cómo se protege el lector:
+
+- **Sin macros ni código.** El archivo no ejecuta macros ni VBA. Los libros con macros (`.xlsm`) se rechazan
+  por su extensión.
+- **Antes de abrir.** Se comprueba que el archivo sea un ZIP válido y se suman los tamaños descomprimidos que
+  declara su índice, **sin descomprimir**. Si la suma supera el límite, se rechaza (protección contra archivos
+  de descompresión masiva).
+- **Solo lectura.** El libro se abre en modo de solo lectura, con los valores calculados. El lector no recalcula
+  fórmulas.
+- **XML seguro.** openpyxl analiza el XML con `defusedxml`, que es una dependencia del proyecto.
+- **Errores controlados.** Cualquier excepción durante la lectura se convierte en `ARCHIVO_INVALIDO`. El mensaje
+  no incluye datos del archivo.
+
+### Ejemplo
+
+Archivo `cobranza_octubre.xlsx`, primera hoja:
+
+| tipo_documento | numero_documento | nombre | telefono_1 | saldo_total | fecha_vencimiento |
+|---|---|---|---|---|---|
+| CC | 1020304050 | María Pérez | 3001234567 | 1500000 (con formato `$ 1.500.000`) | 15/09/2026 (fecha de Excel) |
+| CC | 52111222 | Juan Ruiz | 3109876543.0 | `$ 2.000.000` (texto) | 2026-09-01 (texto) |
+
+- `1020304050` y `52111222` son documentos sin separadores: válidos.
+- `3001234567` llega como número entero y `3109876543.0` como decimal entero: ambos son teléfonos móviles válidos.
+- `1500000` se importa como `1500000.00`. `$ 2.000.000` (texto) se importa como `2000000.00`.
+- La fecha de Excel `15/09/2026` llega como `2026-09-15` y es válida.
+
+---
+
 ## Límites
 
 | Límite | Valor | Variable | Respuesta si se supera |
@@ -292,7 +384,8 @@ Estos errores se devuelven antes de procesar filas y **no crean ningún registro
 | 404 | `NO_ENCONTRADO` | La campaña no existe. |
 | 409 | `CAMPANA_FINALIZADA` | La campaña está finalizada. |
 | 413 | `ARCHIVO_DEMASIADO_GRANDE` | Supera 10 MiB. También lo devuelve el middleware antes de autenticar. |
-| 422 | `FORMATO_ARCHIVO_INVALIDO` | Extensión distinta de `.csv`, codificación no reconocida, bytes nulos o CSV mal formado. |
+| 422 | `FORMATO_ARCHIVO_INVALIDO` | Extensión distinta de `.csv` y `.xlsx` (incluidas `.xls` y `.xlsm`), codificación no reconocida, bytes nulos o CSV mal formado. |
+| 422 | `ARCHIVO_INVALIDO` | `.xlsx` que no se puede leer (no es un ZIP válido, libro dañado) o cuyo tamaño descomprimido supera `IMPORTACION_MAX_BYTES_DESCOMPRIMIDO`. |
 | 422 | `COLUMNAS_FALTANTES` | Falta `tipo_documento`, `numero_documento`, `nombre` o `telefono_1`. El campo `detalles` lista las ausentes. |
 | 422 | `DEMASIADAS_FILAS` | Más de 50 000 filas de datos. |
 | 422 | `ARCHIVO_VACIO` | Sin filas de datos (solo cabecera o líneas vacías). |
@@ -382,7 +475,7 @@ excluida, teléfono excluido parcialmente). Con `+573005550000` excluido para co
 
 | Campo | Obligatorio | Regla |
 |---|---|---|
-| `archivo` | sí | CSV con columna obligatoria `telefono`. Mismas reglas de archivo que las importaciones (extensión, codificación, delimitador, 10 MiB). Máximo 200 000 filas (`EXCLUSIONES_MAX_FILAS`). |
+| `archivo` | sí | CSV o XLSX con columna obligatoria `telefono`. Mismas reglas de archivo que las importaciones (extensión, codificación, delimitador, 10 MiB; en XLSX, [Excel (.xlsx)](#excel-xlsx)). Máximo 200 000 filas (`EXCLUSIONES_MAX_FILAS`). |
 | `motivo` | sí | `rne`, `solicitud_titular`, `numero_errado` o `manual`. |
 | `aplica_a` | no si `motivo=rne` | `venta`, `cobranza` o `todas`. Con `rne` y sin valor, se usa `venta`. Con otro motivo es obligatorio: si falta, `422` antes de leer el archivo. |
 
