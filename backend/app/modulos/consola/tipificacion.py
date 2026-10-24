@@ -339,7 +339,10 @@ def _tipificar(
             and actual.estado in ("tipificando", "en_llamada")
             and actual.llamada_id == llamada.id
         ):
-            estado_agente.fijar(db, agente_id, "disponible", ahora)
+            propietario = db.get(Usuario, agente_id)
+            inactivo = origen == "sistema" and propietario is not None and not propietario.activo
+            # Un agente desactivado no queda `disponible`.
+            estado_agente.fijar(db, agente_id, "desconectado" if inactivo else "disponible", ahora)
         auditoria.registrar(
             db,
             "tipificacion.crear" if origen == "agente" else "consola.tipificacion_sistema",

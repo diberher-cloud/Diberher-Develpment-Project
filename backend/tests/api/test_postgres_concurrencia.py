@@ -494,7 +494,9 @@ def test_asignaciones_concurrentes_de_agentes_no_dan_500(pg):
 def test_tomar_y_quitar_asignacion_a_la_vez_no_deja_reserva_de_un_agente_desasignado(
     pg, monkeypatch
 ):
-    """TOCTOU: `tomar` valida la asignación, el supervisor quita al agente, y `tomar` reserva."""
+    """Intercalación actual: `tomar` valida y toma `FOR SHARE` sobre la asignación; el PUT del
+    supervisor espera a que `tomar` confirme y entonces desasigna y libera la reserva recién hecha.
+    Invariante: nunca queda reserva vigente de un agente desasignado."""
     with pg() as db:
         admin = _usuario(db, "administrador", 0)
         agente = _usuario(db, "agente", 1)
@@ -514,7 +516,7 @@ def test_tomar_y_quitar_asignacion_a_la_vez_no_deja_reserva_de_un_agente_desasig
         # Desde la revisión 2 `tomar` ya tiene FOR SHARE sobre la asignación, así que el
         # supervisor espera a que `tomar` confirme (no se interbloquean): se espera un momento y
         # se continúa; lo que se comprueba al final es que no queda reserva de un desasignado.
-        quitado.wait(2)
+        quitado.wait(0.5)
         return original(*args, **kw)
 
     monkeypatch.setattr(consola, "_reservar_atomico", reservar_tras_quitar)

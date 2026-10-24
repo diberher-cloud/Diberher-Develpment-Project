@@ -59,6 +59,9 @@ def generar(args: argparse.Namespace) -> int:
     return 0
 
 
+LIMITE_LLAMADA_SEGUNDOS = 3600  # timeLimit del <Dial>
+
+
 def liberar_gestion(args: argparse.Namespace) -> int:
     """Soporte: tipifica como `sistema` una llamada que su agente no tipificó."""
     from app.modulos.consola.tipificacion import tipificar_sistema
@@ -73,12 +76,29 @@ def liberar_gestion(args: argparse.Namespace) -> int:
             return 1
         try:
             if llamada.estado in ("iniciando", "sonando", "en_curso"):
-                # Llamada atascada (webhooks perdidos): se cierra como fallida antes de tipificar.
-                telefonia.finalizar(db, llamada, "failed", None, ahora())
-                db.commit()
+                # Llamada atascada (webhooks perdidos). Se valida todo antes de tocar nada.
+                if args.resultado not in ("no_contesta", "numero_errado"):
+                    print(
+                        "La llamada sigue activa: al forzar su cierre (fallida) solo se admiten "
+                        "los resultados no_contesta y numero_errado.",
+                        file=sys.stderr,
+                    )
+                    return 1
+                ahora_ = ahora()
+                antiguedad = (ahora_ - llamada.iniciada_en).total_seconds()
+                if antiguedad <= LIMITE_LLAMADA_SEGUNDOS:
+                    print(
+                        f"La llamada sigue activa y se inició hace {int(antiguedad)} s; solo se "
+                        f"puede forzar su cierre pasados {LIMITE_LLAMADA_SEGUNDOS} s (timeLimit).",
+                        file=sys.stderr,
+                    )
+                    return 1
+                # Sin commit intermedio: cierre y tipificación en una sola transacción.
+                telefonia.finalizar(db, llamada, "failed", None, ahora_)
             tipificar_sistema(db, args.llamada_id, args.resultado, ahora())
             # La auditoría `consola.tipificacion_sistema` la escribe el propio servicio.
         except ErrorApp as exc:
+            db.rollback()
             print(f"{exc.codigo}: {exc.mensaje}", file=sys.stderr)
             return 1
     print(f"Llamada {args.llamada_id} tipificada como '{args.resultado}' (sistema).")

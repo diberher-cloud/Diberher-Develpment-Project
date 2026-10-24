@@ -109,16 +109,90 @@ def test_4b_cli_liberar_gestion(client, ctx, db, session_factory, monkeypatch, c
         cli.main(["liberar-gestion", "--llamada-id", str(lid), "--resultado", "venta"])
 
 
-def test_4b_cli_cierra_llamada_atascada(client, ctx, db, session_factory, monkeypatch):
+def _liberar(res):
+    return cli.main(["liberar-gestion", "--llamada-id", str(res[0]), "--resultado", res[1]])
+
+
+def test_4b_cli_cierra_llamada_atascada_pasada_la_hora(
+    client, ctx, db, session_factory, monkeypatch, reloj
+):
+    from datetime import timedelta
+
+    from app import reloj as modulo_reloj
+
     lid = iniciar(client, ctx, db)  # sigue `iniciando`: webhooks perdidos
     monkeypatch.setattr(cli.bd, "SessionLocal", session_factory)
-    assert (
-        cli.main(["liberar-gestion", "--llamada-id", str(lid), "--resultado", "no_contesta"]) == 0
-    )
+    monkeypatch.setattr(modulo_reloj, "ahora", lambda: reloj() + timedelta(seconds=3601))
+    assert _liberar((lid, "no_contesta")) == 0
     db.expire_all()
     assert db.get(Llamada, lid).estado == "fallida"
     assert db.query(Tipificacion).one().resultado == "no_contesta"
     assert db.get(EstadoAgente, ctx.agente.id).estado == "disponible"
+
+
+def test_4b_cli_no_toca_una_llamada_activa_reciente(
+    client, ctx, db, session_factory, monkeypatch, reloj, capsys
+):
+    from datetime import timedelta
+
+    from app import reloj as modulo_reloj
+
+    lid = iniciar(client, ctx, db)
+    monkeypatch.setattr(cli.bd, "SessionLocal", session_factory)
+    monkeypatch.setattr(modulo_reloj, "ahora", lambda: reloj() + timedelta(seconds=3600))
+    assert _liberar((lid, "no_contesta")) == 1
+    assert "timeLimit" in capsys.readouterr().err
+    db.expire_all()
+    assert db.get(Llamada, lid).estado == "iniciando"
+    assert db.query(Tipificacion).count() == 0
+    assert db.get(EstadoAgente, ctx.agente.id).estado == "en_llamada"
+
+
+def test_4b_cli_cierre_forzado_solo_admite_no_contesta_o_numero_errado(
+    client, ctx, db, session_factory, monkeypatch, reloj
+):
+    from datetime import timedelta
+
+    from app import reloj as modulo_reloj
+
+    lid = iniciar(client, ctx, db)
+    monkeypatch.setattr(cli.bd, "SessionLocal", session_factory)
+    monkeypatch.setattr(modulo_reloj, "ahora", lambda: reloj() + timedelta(hours=2))
+    assert _liberar((lid, "contactado")) == 1
+    db.expire_all()  # nada cambió: la llamada no se cerró ni hay tipificación
+    assert db.get(Llamada, lid).estado == "iniciando"
+    assert db.query(Tipificacion).count() == 0
+
+
+def test_4b_cli_sin_commit_parcial_si_falla_la_tipificacion(
+    client, ctx, db, session_factory, monkeypatch, reloj
+):
+    from datetime import timedelta
+
+    from app import reloj as modulo_reloj
+    from app.errores import ErrorApp
+
+    lid = iniciar(client, ctx, db)
+    monkeypatch.setattr(cli.bd, "SessionLocal", session_factory)
+    monkeypatch.setattr(modulo_reloj, "ahora", lambda: reloj() + timedelta(hours=2))
+
+    def falla(*a, **k):
+        raise ErrorApp(409, "FALLO", "simulado")
+
+    monkeypatch.setattr(tipificacion, "tipificar_sistema", falla)
+    assert _liberar((lid, "no_contesta")) == 1
+    db.expire_all()
+    assert db.get(Llamada, lid).estado == "iniciando"  # el cierre forzado se deshizo
+
+
+def test_tipificar_sistema_de_un_agente_inactivo_lo_deja_desconectado(client, ctx, db, reloj):
+    lid = iniciar(client, ctx, db)
+    terminar(client, ctx, lid)
+    ctx.agente.activo = False
+    db.commit()
+    tipificacion.tipificar_sistema(db, lid, "no_contesta", reloj())
+    db.expire_all()
+    assert db.get(EstadoAgente, ctx.agente.id).estado == "desconectado"
 
 
 def test_contador_de_intentos_se_incrementa_una_vez_por_tipificacion(client, ctx, db):
