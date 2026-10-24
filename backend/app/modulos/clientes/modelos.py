@@ -100,7 +100,9 @@ class CampanaCliente(Base):
     proximo_intento_en: Mapped[datetime | None] = mapped_column(FechaHoraUTC, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(FechaHoraUTC, default=ahora_utc)
     # Fase 2A: reserva por agente y último resultado de gestión
-    reservado_por: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
+    reservado_por: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True, index=True
+    )
     reservado_hasta: Mapped[datetime | None] = mapped_column(FechaHoraUTC, nullable=True)
     ultimo_resultado: Mapped[str | None] = mapped_column(String(20), nullable=True)
     ultima_gestion_en: Mapped[datetime | None] = mapped_column(FechaHoraUTC, nullable=True)

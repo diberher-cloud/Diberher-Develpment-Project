@@ -17,6 +17,7 @@ TABLAS = {
 TABLAS_2A = {
     "campana_agentes", "estados_agente", "historial_estados_agente", "intentos_contacto",
     "llamadas", "eventos_llamada", "grabaciones", "tipificaciones", "promesas_pago", "ventas",
+    "tickets_ws",
 }  # fmt: skip
 
 

@@ -168,7 +168,7 @@ def test_el_numero_completo_nunca_llega_al_agente_por_rest_ni_websocket(
         return r
 
     otro_cc = esc.registro(ctx.campana, numeros=("+576015550123",))
-    with client.websocket_connect(url(ctx.agente)) as ws:
+    with client.websocket_connect(url(ctx.agente, client)) as ws:
         recibir(ws, "conexion.lista")
         anotar("campanas", client.get(f"{K}/campanas", headers=h))
         anotar("registros", client.get(f"{K}/registros", headers=h))

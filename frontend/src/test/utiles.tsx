@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 import { App } from '../App';
@@ -31,12 +31,17 @@ export function iniciarSesionComo(rol: Rol): Usuario {
 export type Manejador = (url: string, init: RequestInit) => Response | Promise<Response> | undefined;
 
 /** Simula fetch: el primer manejador que devuelva respuesta gana; si ninguno, 404. */
+let contadorTickets = 0;
+
 export function simularFetch(...manejadores: Manejador[]) {
   const mock = vi.fn(async (entrada: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(entrada);
     for (const m of manejadores) {
       const r = await m(url, init);
       if (r) return r;
+    }
+    if (url === '/api/v1/ws/ticket' && init.method === 'POST') {
+      return respuesta(200, { ticket: `ticket-${++contadorTickets}`, expira_en: 30 });
     }
     return errorApi(404, 'NO_ENCONTRADO', `Sin simulación para ${url}`);
   });
@@ -87,6 +92,7 @@ export class WebSocketFalso {
   onerror: ((ev: unknown) => void) | null = null;
   enviados: string[] = [];
   cerrado = false;
+  abierto = false;
 
   constructor(public url: string) {
     WebSocketFalso.instancias.push(this);
@@ -101,6 +107,7 @@ export class WebSocketFalso {
   }
 
   abrir() {
+    this.abierto = true;
     this.onopen?.({});
   }
 
@@ -123,7 +130,9 @@ export function instalarWebSocketFalso() {
 }
 
 /** Abre el último socket y envía `conexion.lista`, dentro de `act`. */
-export function abrirSocket(usuarioId = 1, rol: Rol = 'agente') {
+export async function abrirSocket(usuarioId = 1, rol: Rol = 'agente') {
+  // La conexión es asíncrona: primero se pide el ticket por REST. Se espera un socket aún sin abrir.
+  await waitFor(() => expect(WebSocketFalso.instancias.length > 0 && !WebSocketFalso.ultima().abierto).toBe(true));
   const ws = WebSocketFalso.ultima();
   act(() => {
     ws.abrir();

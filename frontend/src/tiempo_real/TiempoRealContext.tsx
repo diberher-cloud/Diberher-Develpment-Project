@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { obtenerTicketWs } from '../api/endpoints';
 import { leerSesion, limpiarSesion } from '../api/sesion';
 import type { EventoTiempoReal } from '../api/tipos';
 import { useAuth } from '../auth/AuthContext';
@@ -31,7 +32,7 @@ export function TiempoRealProvider({ children }: { children: ReactNode }) {
       return;
     }
     const conexion = conectar({
-      token: sesion.token,
+      obtenerTicket: obtenerTicketWs,
       alEvento: (e) => oyentes.current.forEach((o) => o(e)),
       alEstado: setEstado,
       alReconectar: () => setReconexiones((n) => n + 1),

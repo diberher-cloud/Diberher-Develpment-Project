@@ -220,7 +220,7 @@ describe('Consola del agente: flujo completo con SoftphoneFalso', () => {
   it('muestra el bloqueo recibido por llamada.estado (flujo Twilio)', async () => {
     servidor({ simulacion: { llamada_id: 40, permitida: false, motivos: [] } });
     renderizarAppTiempoReal('/consola');
-    const ws = abrirSocket(1);
+    const ws = await abrirSocket(1);
     const u = userEvent.setup();
     await tomarRegistro(u);
     const llamar = screen.getByRole('button', { name: /^Llamar/ });
@@ -285,7 +285,7 @@ describe('Consola del agente: flujo completo con SoftphoneFalso', () => {
   it('la lista se refresca al recibir consola.registro', async () => {
     const s = servidor();
     renderizarAppTiempoReal('/consola');
-    const ws = abrirSocket(1);
+    const ws = await abrirSocket(1);
     await screen.findByRole('button', { name: 'Tomar registro de María Pérez' });
     const contar = () => s.m.mock.calls.filter(([u]) => String(u).startsWith('/api/v1/consola/registros?')).length;
     const antes = contar();

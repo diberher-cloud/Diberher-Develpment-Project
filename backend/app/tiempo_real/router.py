@@ -1,24 +1,53 @@
-"""WebSocket `GET /api/v1/ws?token=<jwt>` (§4.10)."""
+"""WebSocket `GET /api/v1/ws?ticket=<ticket>` y `POST /api/v1/ws/ticket` (§4.10, revisión B3)."""
 
 import asyncio
 import contextlib
+import json
 import time
 from collections.abc import Iterator
-from typing import Any
+from datetime import datetime
+from typing import Annotated, Any
 
-from fastapi import APIRouter, FastAPI, WebSocket
+from fastapi import APIRouter, Depends, FastAPI, WebSocket
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.db import get_db
+from app.dependencias import usuario_actual
 from app.modulos.usuarios.modelos import Usuario
 from app.reloj import Reloj, get_reloj
 from app.seguridad import decodificar_token_con_exp
+from app.tiempo_real import tickets
 from app.tiempo_real.bus import sobre
 from app.tiempo_real.conexiones import gestor
 
 router = APIRouter(tags=["tiempo real"])
 CIERRE_NO_AUTENTICADO = 4401
+CIERRE_DESBORDE = 1013
+_bearer = HTTPBearer(auto_error=False)
+
+
+class TicketSalida(BaseModel):
+    ticket: str
+    expira_en: int
+
+
+@router.post("/ws/ticket", response_model=TicketSalida)
+def emitir_ticket(
+    usuario: Annotated[Usuario, Depends(usuario_actual)],
+    credenciales: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: Annotated[Session, Depends(get_db)],
+    reloj: Annotated[Reloj, Depends(get_reloj)],
+) -> TicketSalida:
+    decodificado = decodificar_token_con_exp(credenciales.credentials) if credenciales else None
+    fin_sesion = (
+        datetime.fromtimestamp(decodificado[1], tz=reloj().tzinfo) if decodificado else None
+    )
+    ticket = tickets.emitir(db, usuario.id, reloj(), fin_sesion)
+    return TicketSalida(ticket=ticket, expira_en=tickets.TTL_SEGUNDOS)
 
 
 @contextlib.contextmanager
@@ -37,12 +66,25 @@ def reloj_de(app: FastAPI) -> Reloj:
     return app.dependency_overrides.get(get_reloj, get_reloj)()
 
 
-def _cargar(app: FastAPI, usuario_id: int) -> tuple[int, str] | None:
+def _abrir(app: FastAPI, ticket: str | None) -> tuple[int, str, float | None] | None:
+    """Consume el ticket y devuelve (usuario_id, rol, fin de sesión epoch) o None."""
     with sesion_de(app) as db:
-        usuario = db.get(Usuario, usuario_id)
+        consumido = tickets.consumir(db, ticket, reloj_de(app)())
+        if consumido is None:
+            return None
+        usuario = db.get(Usuario, consumido[0])
         if usuario is None or not usuario.activo:
             return None
-        return usuario.id, usuario.rol
+        fin = consumido[1].timestamp() if consumido[1] else None
+        return usuario.id, usuario.rol, fin
+
+
+def _vigente(app: FastAPI, usuario_id: int, rol: str) -> bool:
+    """Revalidación periódica: el usuario sigue activo y con el mismo rol."""
+    with sesion_de(app) as db:
+        db.expire_all()
+        usuario = db.get(Usuario, usuario_id)
+        return usuario is not None and usuario.activo and usuario.rol == rol
 
 
 def _marcar_desconectado(app: FastAPI, usuario_id: int) -> None:
@@ -53,17 +95,14 @@ def _marcar_desconectado(app: FastAPI, usuario_id: int) -> None:
 
 
 @router.websocket("/ws")
-async def ws(websocket: WebSocket, token: str | None = None) -> None:
+async def ws(websocket: WebSocket, ticket: str | None = None) -> None:
     await websocket.accept()
-    decodificado = decodificar_token_con_exp(token) if token else None
-    cargado = (
-        await run_in_threadpool(_cargar, websocket.app, decodificado[0]) if decodificado else None
-    )
-    if decodificado is None or cargado is None:
+    abierto = await run_in_threadpool(_abrir, websocket.app, ticket)
+    if abierto is None:
         await websocket.close(code=CIERRE_NO_AUTENTICADO)
         return
-    usuario_id, rol = cargado
-    expira = decodificado[1]
+    usuario_id, rol, fin_sesion = abierto
+    revalidar_cada = get_settings().ws_revalidar_segundos
 
     conexion = gestor.conectar(usuario_id, rol)
     recibir: asyncio.Task[Any] | None = None
@@ -72,14 +111,24 @@ async def ws(websocket: WebSocket, token: str | None = None) -> None:
         await websocket.send_json(sobre("conexion.lista", {"usuario_id": usuario_id, "rol": rol}))
         recibir = asyncio.ensure_future(websocket.receive())
         entregar = asyncio.ensure_future(conexion.cola.get())
+        proxima_revision = time.monotonic() + revalidar_cada
         while True:
-            restante = max(expira - time.time(), 0)
+            esperas = [proxima_revision - time.monotonic()]
+            if fin_sesion is not None:
+                esperas.append(fin_sesion - time.time())
             hechas, _ = await asyncio.wait(
-                {recibir, entregar}, timeout=restante, return_when=asyncio.FIRST_COMPLETED
+                {recibir, entregar},
+                timeout=max(min(esperas), 0),
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            if not hechas:  # el token venció
+            if fin_sesion is not None and time.time() >= fin_sesion:
                 await websocket.close(code=CIERRE_NO_AUTENTICADO)
                 break
+            if time.monotonic() >= proxima_revision:
+                proxima_revision = time.monotonic() + revalidar_cada
+                if not await run_in_threadpool(_vigente, websocket.app, usuario_id, rol):
+                    await websocket.close(code=CIERRE_NO_AUTENTICADO)
+                    break
             if recibir in hechas:
                 mensaje = recibir.result()
                 if mensaje["type"] == "websocket.disconnect":
@@ -88,8 +137,14 @@ async def ws(websocket: WebSocket, token: str | None = None) -> None:
                     await websocket.send_json(sobre("pong", {}))
                 recibir = asyncio.ensure_future(websocket.receive())
             if entregar in hechas:
+                if conexion.desbordada:
+                    await websocket.close(code=CIERRE_DESBORDE)
+                    break
                 await websocket.send_json(entregar.result())
                 entregar = asyncio.ensure_future(conexion.cola.get())
+            elif conexion.desbordada:
+                await websocket.close(code=CIERRE_DESBORDE)
+                break
     except Exception:  # cliente caído a mitad de envío, etc.
         pass
     finally:
@@ -108,8 +163,6 @@ async def ws(websocket: WebSocket, token: str | None = None) -> None:
 def _es_ping(texto: str | None) -> bool:
     if not texto:
         return False
-    import json
-
     try:
         cuerpo = json.loads(texto)
     except ValueError:

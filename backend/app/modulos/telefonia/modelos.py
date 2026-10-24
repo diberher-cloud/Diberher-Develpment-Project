@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     CheckConstraint,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -22,6 +23,7 @@ class Llamada(Base):
         CheckConstraint("direccion IN ('saliente','entrante')", name="direccion"),
         CheckConstraint(en_lista("estado", ESTADOS_LLAMADA), name="estado"),
         CheckConstraint("duracion_segundos IS NULL OR duracion_segundos >= 0", name="duracion"),
+        Index("ix_llamadas_usuario_id_estado", "usuario_id", "estado"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

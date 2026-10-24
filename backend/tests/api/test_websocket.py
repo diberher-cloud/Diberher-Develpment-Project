@@ -16,9 +16,12 @@ W = "/api/v1/ws"
 K = "/api/v1/consola"
 
 
-def url(usuario, **kw) -> str:
+def url(usuario, client, **kw) -> str:
+    """Pide un ticket de un solo uso (POST /ws/ticket) y devuelve la ruta del WebSocket."""
     token, _ = crear_token(usuario.id, usuario.rol, **kw)
-    return f"{W}?token={token}"
+    r = client.post(f"{W}/ticket", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    return f"{W}?ticket={r.json()['ticket']}"
 
 
 def cab_de(usuario):
@@ -33,28 +36,152 @@ def recibir(ws, tipo=None):
     return ev
 
 
-def test_token_invalido_o_ausente_cierra_con_4401(client, crear_usuario):
-    for ruta in (W, f"{W}?token=basura", f"{W}?token="):
+def test_ticket_invalido_o_ausente_cierra_con_4401(client, crear_usuario):
+    agente = crear_usuario("agente")
+    jwt, _ = crear_token(agente.id, agente.rol)
+    # Se retira el soporte de `?token=`: ni siquiera un JWT válido abre el socket.
+    for ruta in (W, f"{W}?ticket=basura", f"{W}?ticket=", f"{W}?token={jwt}", f"{W}?ticket={jwt}"):
         with client.websocket_connect(ruta) as ws, pytest.raises(WebSocketDisconnect) as e:
             ws.receive_json()
         assert e.value.code == 4401
 
 
-def test_token_expirado_y_usuario_inactivo_4401(client, crear_usuario):
+def test_emitir_ticket_exige_sesion_valida(client, crear_usuario):
     agente = crear_usuario("agente")
-    vencido = url(agente, ahora=datetime.now(UTC) - timedelta(days=2))
-    with client.websocket_connect(vencido) as ws, pytest.raises(WebSocketDisconnect) as e:
-        ws.receive_json()
-    assert e.value.code == 4401
+    assert client.post(f"{W}/ticket").status_code == 401
+    vencido, _ = crear_token(agente.id, agente.rol, ahora=datetime.now(UTC) - timedelta(days=2))
+    r = client.post(f"{W}/ticket", headers={"Authorization": f"Bearer {vencido}"})
+    assert r.status_code == 401
     inactivo = crear_usuario("agente", activo=False)
-    with client.websocket_connect(url(inactivo)) as ws, pytest.raises(WebSocketDisconnect) as e:
+    tok, _ = crear_token(inactivo.id, inactivo.rol)
+    assert client.post(f"{W}/ticket", headers={"Authorization": f"Bearer {tok}"}).status_code == 401
+    ok, _ = crear_token(agente.id, agente.rol)
+    r = client.post(f"{W}/ticket", headers={"Authorization": f"Bearer {ok}"})
+    assert r.status_code == 200 and set(r.json()) == {"ticket", "expira_en"}
+    assert r.json()["expira_en"] == 30 and len(r.json()["ticket"]) >= 32
+    assert ok not in r.text
+
+
+def test_ticket_de_un_solo_uso(client, crear_usuario):
+    agente = crear_usuario("agente")
+    ruta = url(agente, client)
+    with client.websocket_connect(ruta) as ws:
+        recibir(ws, "conexion.lista")
+    with client.websocket_connect(ruta) as ws, pytest.raises(WebSocketDisconnect) as e:
+        ws.receive_json()  # reutilizado
+    assert e.value.code == 4401
+
+
+def test_ticket_caduca_a_los_30_segundos(client, crear_usuario, reloj):
+    agente = crear_usuario("agente")
+    ruta = url(agente, client)
+    reloj.avanzar(seconds=31)
+    with client.websocket_connect(ruta) as ws, pytest.raises(WebSocketDisconnect) as e:
         ws.receive_json()
     assert e.value.code == 4401
+    ruta2 = url(agente, client)
+    reloj.avanzar(seconds=29)
+    with client.websocket_connect(ruta2) as ws:
+        recibir(ws, "conexion.lista")
+
+
+def test_los_tickets_se_guardan_con_hash_no_en_claro(client, crear_usuario, db):
+    from app.tiempo_real.modelos import TicketWS
+
+    agente = crear_usuario("agente")
+    ticket = url(agente, client).split("ticket=")[1]
+    fila = db.query(TicketWS).one()
+    assert ticket not in fila.ticket_hash and len(fila.ticket_hash) == 64
+
+
+def test_ticket_de_un_usuario_desactivado_despues_de_emitirlo(client, crear_usuario, db):
+    agente = crear_usuario("agente")
+    ruta = url(agente, client)
+    agente.activo = False
+    db.commit()
+    with client.websocket_connect(ruta) as ws, pytest.raises(WebSocketDisconnect) as e:
+        ws.receive_json()
+    assert e.value.code == 4401
+
+
+def test_revalidacion_periodica_cierra_si_el_usuario_deja_de_estar_activo(
+    client, crear_usuario, db, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "ws_revalidar_segundos", 0.2)
+    agente = crear_usuario("agente")
+    with client.websocket_connect(url(agente, client)) as ws:
+        recibir(ws, "conexion.lista")
+        agente.activo = False
+        db.commit()
+        with pytest.raises(WebSocketDisconnect) as e:
+            ws.receive_json()
+        assert e.value.code == 4401
+
+
+def test_revalidacion_periodica_cierra_si_cambia_el_rol(client, crear_usuario, db, monkeypatch):
+    monkeypatch.setattr(get_settings(), "ws_revalidar_segundos", 0.2)
+    sup = crear_usuario("supervisor")
+    with client.websocket_connect(url(sup, client)) as ws:
+        recibir(ws, "conexion.lista")
+        sup.rol = "agente"
+        db.commit()
+        with pytest.raises(WebSocketDisconnect) as e:
+            ws.receive_json()
+        assert e.value.code == 4401
+
+
+def test_cola_desbordada_cierra_la_conexion(client, crear_usuario, monkeypatch):
+    from app.tiempo_real import conexiones
+
+    monkeypatch.setattr(conexiones, "MAX_COLA", 2)
+    agente = crear_usuario("agente")
+    with client.websocket_connect(url(agente, client)) as ws:
+        recibir(ws, "conexion.lista")
+        # Se inyectan más eventos de los que caben antes de que el hilo del socket los drene.
+        c = next(iter(conexiones.gestor.conexiones))
+        c.desbordada = True
+        with pytest.raises(WebSocketDisconnect) as e:
+            for i in range(10):
+                conexiones.gestor.repartir(
+                    {"tipo": "consola.registro", "datos": {"n": i}, "emitido_en": "x"}
+                )
+                ws.receive_json()
+        assert e.value.code == 1013
+
+
+def test_filtro_de_logging_enmascara_token_y_ticket():
+    import logging
+
+    from app.logging_seguro import MascaraCredencialesFilter
+
+    f = MascaraCredencialesFilter()
+    rec = logging.LogRecord(
+        "uvicorn.error", logging.INFO, "x", 1,
+        '%s - "WebSocket %s" [accepted]', ("1.2.3.4:5", "/api/v1/ws?token=eyJabc.def&ticket=XyZ_1"),
+        None,
+    )  # fmt: skip
+    assert f.filter(rec)
+    msg = rec.getMessage()
+    assert "eyJabc" not in msg and "XyZ_1" not in msg and "token=***" in msg and "ticket=***" in msg
+    limpio = logging.LogRecord("x", logging.INFO, "x", 1, "sin secretos %s", ("a=b",), None)
+    f.filter(limpio)
+    assert limpio.getMessage() == "sin secretos a=b"
+
+
+def test_el_filtro_esta_instalado_en_uvicorn():
+    import logging
+
+    from app.logging_seguro import MascaraCredencialesFilter
+
+    for nombre in ("uvicorn.error", "uvicorn.access"):
+        assert any(
+            isinstance(f, MascaraCredencialesFilter) for f in logging.getLogger(nombre).filters
+        )
 
 
 def test_conexion_lista_y_ping_pong(client, crear_usuario):
     agente = crear_usuario("agente")
-    with client.websocket_connect(url(agente)) as ws:
+    with client.websocket_connect(url(agente, client)) as ws:
         ev = recibir(ws, "conexion.lista")
         assert ev["datos"] == {"usuario_id": agente.id, "rol": "agente"}
         assert ev["emitido_en"].endswith("Z")
@@ -74,7 +201,7 @@ def test_el_token_vence_estando_conectado(client, crear_usuario, monkeypatch):
         - timedelta(minutes=get_settings().jwt_expiracion_minutos)
         + timedelta(seconds=1)
     )
-    with client.websocket_connect(url(agente, ahora=ahora)) as ws:
+    with client.websocket_connect(url(agente, client, ahora=ahora)) as ws:
         recibir(ws, "conexion.lista")
         with pytest.raises(WebSocketDisconnect) as e:
             ws.receive_json()
@@ -85,9 +212,9 @@ def test_reparto_por_rol(client, crear_usuario):
     a1, a2 = crear_usuario("agente"), crear_usuario("agente")
     sup = crear_usuario("supervisor")
     with (
-        client.websocket_connect(url(a1)) as w1,
-        client.websocket_connect(url(a2)) as w2,
-        client.websocket_connect(url(sup)) as ws,
+        client.websocket_connect(url(a1, client)) as w1,
+        client.websocket_connect(url(a2, client)) as w2,
+        client.websocket_connect(url(sup, client)) as ws,
     ):
         for w in (w1, w2, ws):
             recibir(w, "conexion.lista")
@@ -111,7 +238,7 @@ def test_reparto_por_rol(client, crear_usuario):
 def test_consola_registro_llega_a_todos_los_agentes(client, esc, crear_usuario, reloj, h_admin):
     a1, a2 = crear_usuario("agente"), crear_usuario("agente")
     camp = esc.campana()
-    with client.websocket_connect(url(a2)) as w2:
+    with client.websocket_connect(url(a2, client)) as w2:
         recibir(w2, "conexion.lista")
         r = client.put(
             f"/api/v1/campanas/{camp.id}/agentes", json={"usuario_ids": [a1.id]}, headers=h_admin
@@ -132,7 +259,10 @@ def test_flujo_de_llamada_emite_eventos_al_supervisor_y_al_agente(
     sup = crear_usuario("supervisor")
     from escenario import telefono_de
 
-    with client.websocket_connect(url(sup)) as ws, client.websocket_connect(url(ctx.agente)) as wa:
+    with (
+        client.websocket_connect(url(sup, client)) as ws,
+        client.websocket_connect(url(ctx.agente, client)) as wa,
+    ):
         recibir(ws, "conexion.lista")
         recibir(wa, "conexion.lista")
         r = client.post(
@@ -157,7 +287,7 @@ def test_bloqueo_publica_motivos(client, esc, crear_usuario, reloj, db):
 
     ctx = contexto(esc, crear_usuario, reloj)
     esc.estado(ctx.agente, "pausa", reloj())
-    with client.websocket_connect(url(ctx.agente)) as wa:
+    with client.websocket_connect(url(ctx.agente, client)) as wa:
         recibir(wa, "conexion.lista")
         client.post(
             "/api/v1/telefonia/simulacion/llamadas",
@@ -206,7 +336,7 @@ def test_error_en_un_endpoint_no_emite_eventos(client, crear_usuario, esc, h_adm
         raise RuntimeError("fallo")
 
     monkeypatch.setattr(servicio.auditoria, "registrar", boom)
-    with client.websocket_connect(url(sup)) as ws:
+    with client.websocket_connect(url(sup, client)) as ws:
         recibir(ws, "conexion.lista")
         r = client.put(
             f"/api/v1/campanas/{camp.id}/agentes", json={"usuario_ids": [ag.id]}, headers=h_admin
@@ -223,7 +353,7 @@ def test_desconexion_prolongada_pasa_a_desconectado(
     monkeypatch.setattr(get_settings(), "consola_desconexion_segundos", 0)
     agente = crear_usuario("agente")
     esc.estado(agente, "disponible", reloj())
-    with client.websocket_connect(url(agente)) as ws:
+    with client.websocket_connect(url(agente, client)) as ws:
         recibir(ws, "conexion.lista")
     for _ in range(50):
         db.expire_all()
@@ -239,7 +369,7 @@ def test_en_llamada_no_se_desconecta_ni_con_reconexion(
     monkeypatch.setattr(get_settings(), "consola_desconexion_segundos", 0)
     agente = crear_usuario("agente")
     esc.estado(agente, "en_llamada", reloj())
-    with client.websocket_connect(url(agente)) as ws:
+    with client.websocket_connect(url(agente, client)) as ws:
         recibir(ws, "conexion.lista")
     time.sleep(0.5)
     db.expire_all()
@@ -295,7 +425,7 @@ def test_notify_llega_a_un_socket_conectado():
                 yield s
 
         app.dependency_overrides[get_db] = _sesion
-        with TestClient(app) as c, c.websocket_connect(url(u)) as ws:
+        with TestClient(app) as c, c.websocket_connect(url(u, c)) as ws:
             recibir(ws, "conexion.lista")
             time.sleep(1)  # deja que el LISTEN quede activo
             with engine.begin() as conn:
@@ -322,3 +452,15 @@ def test_seleccion_del_bus_segun_configuracion(monkeypatch):
     assert bus.crear_bus("postgresql+psycopg://u:p@h/x").nombre == "memoria"
     monkeypatch.setattr(s, "bus_eventos", "postgres")
     assert bus.crear_bus("sqlite://").nombre == "postgres"
+
+
+def test_encolar_marca_desbordada_al_llenarse_la_cola(monkeypatch):
+    from app.tiempo_real import conexiones
+
+    monkeypatch.setattr(conexiones, "MAX_COLA", 2)
+    c = conexiones.Conexion(1, "agente")
+    for i in range(2):
+        c.encolar({"n": i})
+    assert not c.desbordada
+    c.encolar({"n": 3})
+    assert c.desbordada and c.cola.qsize() == 2

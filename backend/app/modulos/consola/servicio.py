@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import and_, case, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.catalogos import ESTADOS_LLAMADA_ACTIVAS
+from app.catalogos import ESTADOS_LLAMADA_ACTIVAS, ESTADOS_LLAMADA_TIPIFICABLES
 from app.config import get_settings
 from app.errores import ErrorApp
 from app.modulos.auditoria import servicio as auditoria
@@ -192,19 +192,56 @@ def _cargar(db: Session, registro_id: int) -> tuple[CampanaCliente, Campana]:
     return cc, campana
 
 
-def _llamada_activa_de_otro(usuario_id: int):
-    """EXISTS: llamada no terminal sobre el registro de un agente distinto de `usuario_id`."""
+def _llamada_pendiente_de_otro(usuario_id: int):
+    """EXISTS (correlacionado con `campana_clientes`): llamada de OTRO agente sobre el registro
+    que sigue activa o terminó sin tipificar. Protege el registro hasta que ese agente tipifique."""
+    sin_tipificar = ~exists().where(Tipificacion.llamada_id == Llamada.id)
     return exists().where(
         Llamada.campana_cliente_id == CampanaCliente.id,
-        Llamada.estado.in_(ESTADOS_LLAMADA_ACTIVAS),
         Llamada.usuario_id != usuario_id,
+        or_(
+            Llamada.estado.in_(ESTADOS_LLAMADA_ACTIVAS),
+            and_(Llamada.estado.in_(ESTADOS_LLAMADA_TIPIFICABLES), sin_tipificar),
+        ),
     )
+
+
+def llamada_pendiente_en_registro(db: Session, cc_id: int, usuario_id: int | None = None):
+    """Primera llamada del registro activa o terminada sin tipificar (opcional: de un agente)."""
+    sin_tipificar = ~exists().where(Tipificacion.llamada_id == Llamada.id)
+    consulta = select(Llamada).where(
+        Llamada.campana_cliente_id == cc_id,
+        or_(
+            Llamada.estado.in_(ESTADOS_LLAMADA_ACTIVAS),
+            and_(Llamada.estado.in_(ESTADOS_LLAMADA_TIPIFICABLES), sin_tipificar),
+        ),
+    )
+    if usuario_id is not None:
+        consulta = consulta.where(Llamada.usuario_id == usuario_id)
+    return db.scalars(consulta.limit(1)).first()
 
 
 def _reservar_atomico(
     db: Session, registro_id: int, usuario_id: int, ahora: datetime, hasta: datetime
 ) -> bool:
-    """UPDATE condicional: solo gana si está libre, ya es mío o la reserva caducó."""
+    """UPDATE condicional: solo gana si está libre, ya es mío o la reserva caducó.
+
+    S1: antes toma `FOR SHARE` sobre la fila de asignación (si no existe, no reserva): quitar la
+    asignación espera a que esta transacción confirme y entonces libera la reserva recién hecha.
+    """
+    asignacion = db.scalar(
+        select(CampanaAgente.id)
+        .where(
+            CampanaAgente.usuario_id == usuario_id,
+            CampanaAgente.campana_id
+            == select(CampanaCliente.campana_id)
+            .where(CampanaCliente.id == registro_id)
+            .scalar_subquery(),
+        )
+        .with_for_update(read=True)
+    )
+    if asignacion is None:
+        return False
     resultado = db.execute(
         update(CampanaCliente)
         .where(
@@ -215,7 +252,9 @@ def _reservar_atomico(
                 CampanaCliente.reservado_por == usuario_id,
                 and_(
                     CampanaCliente.reservado_hasta < ahora,
-                    ~_llamada_activa_de_otro(usuario_id),  # D-1: sin robo en llamada larga
+                    ~_llamada_pendiente_de_otro(
+                        usuario_id
+                    ),  # D-1/B2: sin robo con llamada pendiente
                 ),
             ),
             # F-3: la asignación se comprueba en la misma sentencia que la reserva.
@@ -241,15 +280,8 @@ def tomar(db: Session, usuario: Usuario, registro_id: int, ahora: datetime) -> F
         raise no_disponible
     mio_vigente = reserva_vigente(cc, ahora) and cc.reservado_por == usuario.id
     if not mio_vigente:
-        llamada_ajena = db.scalar(
-            select(
-                exists().where(
-                    Llamada.campana_cliente_id == cc.id,
-                    Llamada.estado.in_(ESTADOS_LLAMADA_ACTIVAS),
-                    Llamada.usuario_id != usuario.id,
-                )
-            )
-        )
+        pendiente = llamada_pendiente_en_registro(db, cc.id)
+        llamada_ajena = pendiente is not None and pendiente.usuario_id != usuario.id
         if reserva_vigente(cc, ahora) or llamada_ajena:
             raise ErrorApp(409, "REGISTRO_RESERVADO", "El registro está reservado por otro agente.")
         if cc.intentos >= campana.max_intentos or (
@@ -297,8 +329,10 @@ def soltar(db: Session, usuario: Usuario, registro_id: int, ahora: datetime) -> 
     cc, campana = _cargar(db, registro_id)
     if not (reserva_vigente(cc, ahora) and cc.reservado_por == usuario.id):
         raise ErrorApp(409, "REGISTRO_NO_RESERVADO", "No tiene una reserva vigente del registro.")
-    pendiente = estado_agente.llamada_sin_tipificar(db, usuario.id)
-    if pendiente is not None and pendiente.campana_cliente_id == cc.id:
+    pendiente = llamada_pendiente_en_registro(db, cc.id)
+    if pendiente is not None:
+        if pendiente.estado in ESTADOS_LLAMADA_ACTIVAS:
+            raise ErrorApp(409, "AGENTE_EN_LLAMADA", "Hay una llamada en curso sobre el registro.")
         raise ErrorApp(
             409, "TIPIFICACION_PENDIENTE", "Debe tipificar la llamada antes de soltar el registro."
         )
@@ -311,6 +345,10 @@ def ver_ficha(db: Session, usuario: Usuario, registro_id: int, ahora: datetime) 
     cc, campana = _cargar(db, registro_id)
     if not (reserva_vigente(cc, ahora) and cc.reservado_por == usuario.id):
         raise ErrorApp(409, "REGISTRO_NO_RESERVADO", "No tiene una reserva vigente del registro.")
+    if not _asignada(db, usuario.id, campana.id):
+        # Excepción (D-1): puede ver la ficha de la gestión que dejó en curso o sin tipificar.
+        if llamada_pendiente_en_registro(db, cc.id, usuario.id) is None:
+            raise _no_asignada()
     auditoria.registrar(
         db, "consola.ficha_ver", usuario.id, "campana_cliente", cc.id, {"campana_id": campana.id}
     )

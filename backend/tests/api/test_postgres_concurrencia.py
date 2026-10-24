@@ -391,11 +391,18 @@ def test_finalizacion_concurrente_por_dos_senales_distintas_ocurre_una_vez(pg, m
         )
     from app.modulos.telefonia import servicio as tel_servicio
 
-    barrera = threading.Barrier(2, timeout=10)
+    # Desde la revisión 2 (B1) los webhooks de una misma llamada se serializan con FOR UPDATE al
+    # cargarla, así que el segundo hilo no llega a `finalizar` mientras el primero no confirma:
+    # la barrera es oportunista (si se rompe por tiempo, ambos siguen) y el resultado esperado
+    # (una sola finalización) no cambia.
+    barrera = threading.Barrier(2, timeout=1.5)
     original = tel_servicio.finalizar
 
     def con_barrera(*a, **kw):
-        barrera.wait()
+        try:
+            barrera.wait()
+        except threading.BrokenBarrierError:
+            pass
         return original(*a, **kw)
 
     monkeypatch.setattr(tel_servicio, "finalizar", con_barrera)

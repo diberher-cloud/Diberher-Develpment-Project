@@ -8,7 +8,10 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import registro_modelos  # noqa: F401  (registra los modelos en Base.metadata)
+from app import (
+    logging_seguro,
+    registro_modelos,  # noqa: F401  (registra los modelos en Base.metadata)
+)
 from app.config import VERSION, Settings, get_settings
 from app.errores import registrar_manejadores
 from app.middleware import ProteccionMiddleware
@@ -54,6 +57,7 @@ def crear_lifespan(settings: Settings):
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    logging_seguro.instalar()
     settings = settings or get_settings()
     app = FastAPI(
         title="Plataforma de campañas outbound",

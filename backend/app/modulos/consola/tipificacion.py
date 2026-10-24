@@ -273,10 +273,16 @@ def tipificar(
                     exclusion.id,
                     {"motivo": "numero_errado", "aplica_a": "todas"},
                 )
-        consola.liberar_registro(cc)
-        cc.estado = efecto.estado
+        # B2c: solo se libera/cierra el registro si la reserva sigue siendo de este agente. Si
+        # otro agente lo tiene (caso excepcional), se registran la tipificación, el intento, la
+        # exclusión y los contadores (intentos, último resultado), pero NO se toca su reserva,
+        # el estado del registro ni `proximo_intento_en`.
+        es_dueno = cc.reservado_por in (usuario.id, None)
+        if es_dueno:
+            consola.liberar_registro(cc)
+            cc.estado = efecto.estado
+            cc.proximo_intento_en = efecto.proximo_intento_en
         cc.intentos = efecto.intentos
-        cc.proximo_intento_en = efecto.proximo_intento_en
         cc.ultimo_resultado = r
         cc.ultima_gestion_en = ahora
         if llamada.intento_contacto_id is not None:
@@ -293,9 +299,10 @@ def tipificar(
             tip.id,
             {"tipificacion_id": tip.id, "llamada_id": llamada.id, "resultado": r},
         )
-        consola.publicar_registro(
-            db, campana.id, cc.id, "gestionado" if efecto.cierra_registro else "liberado"
-        )
+        if es_dueno:
+            consola.publicar_registro(
+                db, campana.id, cc.id, "gestionado" if efecto.cierra_registro else "liberado"
+            )
         db.commit()
     except IntegrityError as exc:
         db.rollback()

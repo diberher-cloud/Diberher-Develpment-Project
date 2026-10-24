@@ -310,6 +310,19 @@ Estados terminales: `completada`, `ocupado`, `no_contesta`, `fallida`, `cancelad
 | origen | varchar(10) | NOT NULL |
 | creado_en | FechaHoraUTC | NOT NULL |
 
+### `tickets_ws` *(revisión post-QA, B3)*
+| columna | tipo | restricciones |
+|---|---|---|
+| id | integer | PK |
+| ticket_hash | varchar(64) | NOT NULL, UNIQUE (SHA-256 del ticket) |
+| usuario_id | integer | FK usuarios.id, NOT NULL |
+| expira_en | FechaHoraUTC | NOT NULL (emisión + 30 s) |
+| sesion_expira_en | FechaHoraUTC | NULL (`exp` del JWT que lo pidió) |
+| usado_en | FechaHoraUTC | NULL (consumido) |
+| creado_en | FechaHoraUTC | NOT NULL |
+
+Índices añadidos (revisión): `llamadas(usuario_id, estado)` y `campana_clientes(reservado_por)`.
+
 `downgrade()` elimina las tablas en orden inverso y retira las columnas de `campana_clientes` (batch).
 `auditoria`, `exclusiones` y `politicas_cumplimiento` no cambian de esquema en 2A.
 
@@ -695,6 +708,14 @@ llamada recibe `contacto_directo` y `resultado`; agente → `disponible`; audito
 - *F-2*: la finalización de una llamada es un `UPDATE … WHERE estado NOT IN (terminales)`: dos señales simultáneas finalizan una sola vez.
 - *F-4/F-5*: `promesa.monto` y `venta.valor` solo admiten `\d{1,12}(\.\d{1,2})?`; `volver_a_llamar_en` debe estar entre 1984 y 2100; ambos casos dan `422 VALIDACION` en el campo.
 
+**Revisión post-QA 2 (2A).**
+- *B1*: los webhooks de estado y `dial-terminado` cargan la llamada con `FOR UPDATE`; las transiciones son `UPDATE` condicionales (`iniciando→sonando`, `iniciando|sonando→en_curso`, nunca desde un estado terminal).
+- *B2*: una llamada de otro agente activa **o terminada sin tipificar** protege el registro (`tomar` → `409 REGISTRO_RESERVADO` aunque la reserva venciera); finalizar renueva la reserva; `tipificar` solo libera/cierra el registro si la reserva es del agente (o está libre); si fuera de otro agente, anota tipificación, intento, exclusión y contadores (`intentos`, `ultimo_resultado`, `ultima_gestion_en`) sin tocar su reserva ni el estado del registro; `soltar` con llamada activa → `409 AGENTE_EN_LLAMADA`, terminada sin tipificar → `409 TIPIFICACION_PENDIENTE`.
+- *B4*: `procesar_saliente` bloquea (`FOR UPDATE`, en este orden) `estados_agente` del agente y `clientes` del cliente antes de validar: dos llamadas simultáneas no pasan ambas la validación de estado ni de frecuencia.
+- *S1*: la reserva toma `FOR SHARE` sobre la asignación; `GET /consola/registros/{id}` exige asignación salvo gestión propia activa o sin tipificar.
+- *S2*: `dial-terminado` con `DialCallStatus=completed` y `DialCallDuration>0` cuenta como contestada (`completada`) aunque falte el callback `answered`; la duración es la de la pierna del cliente (`DialCallDuration`/`CallDuration` de la pierna hija); la `CallDuration` de la pierna del agente no se usa.
+- *S3/S4/S5/S6/S7*: índices `llamadas(usuario_id, estado)` y `campana_clientes(reservado_por)` en 0002; revalidación y cola acotada del WebSocket; keepalives TCP y sondeo `SELECT 1` en `escucha.py`; el `TWILIO_AUTH_TOKEN` de ejemplo o vacío se rechaza fuera de `test`/`desarrollo`; la firma deduplica valores repetidos igual que `twilio.request_validator`.
+
 Respuesta `201 Tipificacion`:
 ```json
 {
@@ -836,10 +857,18 @@ que en Fase 1 con los nuevos códigos posibles.
 
 ### 4.10 Tiempo real
 
-**`GET /api/v1/ws?token=<jwt>`** (WebSocket):
-- Se acepta la conexión y se valida el token con la misma lógica que `usuario_actual` (usuario
-  existente y activo). Inválido/expirado → cierre con código **4401**. Al vencer el `exp` del token
-  estando conectado → cierre 4401.
+**`GET /api/v1/ws?ticket=<ticket>`** (WebSocket) — *revisión post-QA (B3): ya no se admite `?token=<jwt>`*:
+
+> **Nota de revisión (B3).** El JWT en la URL del WebSocket quedaba en los logs de uvicorn y de los
+> proxies. Ahora: `POST /api/v1/ws/ticket` (Bearer, cualquier rol) → `200 {"ticket": "<aleatorio>",
+> "expira_en": 30}`. El ticket es de un solo uso y dura 30 s; se guarda su hash SHA-256 en la tabla
+> `tickets_ws` (funciona con varias instancias). `GET /ws?ticket=` lo consume; ticket inválido,
+> caducado o ya usado → cierre `4401`. La conexión se cierra con `4401` al vencer el JWT con el que se
+> pidió el ticket, y cada `WS_REVALIDAR_SEGUNDOS` (60) se revalida que el usuario siga activo y con el
+> mismo rol. La cola por conexión admite 1000 eventos; al desbordar se cierra con `1013`. Un filtro de
+> logging enmascara `token=`/`ticket=` en `uvicorn.error` y `uvicorn.access`.
+- Se acepta la conexión y se consume el ticket (usuario existente y activo). Inválido/expirado/usado →
+  cierre con código **4401**. Al vencer el `exp` del JWT que pidió el ticket → cierre 4401.
 - Primer mensaje del servidor:
   `{"tipo":"conexion.lista","datos":{"usuario_id":5,"rol":"agente"},"emitido_en":"2026-10-23T15:00:00Z"}`.
 - Cliente → servidor: `{"tipo":"ping"}` cada 30 s → `{"tipo":"pong","datos":{},"emitido_en":"…"}`.

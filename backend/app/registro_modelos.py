@@ -15,6 +15,7 @@ from app.modulos.exclusiones.modelos import Exclusion
 from app.modulos.importacion.modelos import Importacion, ImportacionError
 from app.modulos.telefonia.modelos import EventoLlamada, Grabacion, Llamada
 from app.modulos.usuarios.modelos import Usuario
+from app.tiempo_real.modelos import TicketWS
 
 __all__ = [
     "Auditoria",
@@ -28,6 +29,7 @@ __all__ = [
     "Llamada",
     "PromesaPago",
     "Tipificacion",
+    "TicketWS",
     "Venta",
     "CampanaCliente",
     "Cliente",

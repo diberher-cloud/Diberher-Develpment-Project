@@ -53,6 +53,7 @@ class Settings(BaseSettings):
 
     # Importación Excel y tiempo real
     importacion_max_bytes_descomprimido: int = 100 * 1024 * 1024
+    ws_revalidar_segundos: float = 60
     bus_eventos: Literal["auto", "memoria", "postgres"] = "auto"
 
     @model_validator(mode="after")
@@ -88,9 +89,13 @@ class Settings(BaseSettings):
                 raise ValueError("TWILIO_NUMERO_SALIENTE debe estar en formato E.164 (+57...).")
             if self.entorno != "test" and not self.public_base_url.startswith("https://"):
                 raise ValueError("PUBLIC_BASE_URL debe usar https:// con el proveedor twilio.")
+        if self.entorno not in ("test", "desarrollo"):
+            # También con el proveedor falso: la firma de los webhooks usa este token.
+            if not self.twilio_auth_token or self.twilio_auth_token == TOKEN_TWILIO_EJEMPLO:
+                raise ValueError(
+                    "TWILIO_AUTH_TOKEN no puede estar vacío ni ser el valor de ejemplo."
+                )
         if self.entorno == "produccion":
-            if self.twilio_auth_token == TOKEN_TWILIO_EJEMPLO:
-                raise ValueError("TWILIO_AUTH_TOKEN no puede ser el valor de ejemplo.")
             if not self.public_base_url.startswith("https://"):
                 raise ValueError("PUBLIC_BASE_URL debe usar https:// en producción.")
 

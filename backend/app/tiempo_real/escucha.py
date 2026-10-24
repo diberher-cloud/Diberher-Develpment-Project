@@ -12,6 +12,13 @@ from app.tiempo_real.conexiones import GestorConexiones
 logger = logging.getLogger("app")
 BACKOFF_INICIAL = 1.0
 BACKOFF_MAXIMO = 30.0
+SONDEO_SEGUNDOS = 30.0
+KEEPALIVES = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+}
 
 
 def url_psycopg(url_sqlalchemy: str) -> str:
@@ -25,15 +32,19 @@ async def escuchar(url_bd: str, gestor: GestorConexiones) -> None:
     while True:
         try:
             async with await psycopg.AsyncConnection.connect(
-                url_psycopg(url_bd), autocommit=True
+                url_psycopg(url_bd), autocommit=True, **KEEPALIVES
             ) as conexion:
                 await conexion.execute(f"LISTEN {CANAL_PG}")
                 espera = BACKOFF_INICIAL
-                async for aviso in conexion.notifies():
-                    try:
-                        gestor.repartir(json.loads(aviso.payload))
-                    except ValueError:
-                        logger.warning("Evento de tiempo real con JSON inválido descartado.")
+                while True:
+                    async for aviso in conexion.notifies(timeout=SONDEO_SEGUNDOS):
+                        try:
+                            gestor.repartir(json.loads(aviso.payload))
+                        except ValueError:
+                            logger.warning("Evento de tiempo real con JSON inválido descartado.")
+                    # Sin avisos en SONDEO_SEGUNDOS: comprueba que la conexión sigue viva (si
+                    # está rota, el SELECT falla y se reconecta).
+                    await conexion.execute("SELECT 1")
         except asyncio.CancelledError:
             raise
         except Exception as exc:

@@ -60,7 +60,7 @@ describe('Supervisión de agentes', () => {
     iniciarSesionComo('supervisor');
     renderizarAppTiempoReal('/supervision/agentes');
     await screen.findByRole('rowheader', { name: 'Pedro Agente' });
-    const ws = abrirSocket(2, 'supervisor');
+    const ws = await abrirSocket(2, 'supervisor');
 
     emitirEvento(ws, { tipo: 'agente.estado', datos: { usuario_id: 7, estado: 'disponible', desde: '2026-10-23T15:00:00Z', motivo_pausa: null, llamada_id: null } });
     expect(within(fila('Zoe Agente')).getByText('Disponible')).toBeInTheDocument();
@@ -82,11 +82,11 @@ describe('Supervisión de agentes', () => {
     const m = simularFetch((url) => (url === '/api/v1/supervision/agentes' ? respuesta(200, agentes) : undefined));
     renderizarAppTiempoReal('/supervision/agentes');
     await screen.findByRole('rowheader', { name: 'Pedro Agente' });
-    const ws = abrirSocket(2, 'supervisor');
+    const ws = await abrirSocket(2, 'supervisor');
     act(() => ws.caer(1006));
     await waitFor(() => expect(WebSocketFalso.instancias.length).toBe(2), { timeout: 3000 });
     const antes = m.mock.calls.length;
-    abrirSocket(2, 'supervisor');
+    await abrirSocket(2, 'supervisor');
     await waitFor(() => expect(m.mock.calls.length).toBeGreaterThan(antes));
   });
 });

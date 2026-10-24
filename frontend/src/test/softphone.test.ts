@@ -29,6 +29,7 @@ vi.mock('@twilio/voice-sdk', () => {
     destroy = vi.fn();
     disconnectAll = vi.fn();
     register = vi.fn(async () => this.emitir('registered'));
+    state = 'unregistered';
     connect = vi.fn(async () => {
       this.llamada = new (globalThis as unknown as { __LlamadaSim: new () => unknown }).__LlamadaSim();
       return this.llamada;
@@ -49,7 +50,7 @@ vi.mock('@twilio/voice-sdk', () => {
 
 interface DispositivoSim {
   token: string; opciones: unknown; llamada: LlamadaSim; updateToken: ReturnType<typeof vi.fn>;
-  destroy: ReturnType<typeof vi.fn>; connect: ReturnType<typeof vi.fn>; emitir: (e: string, ...a: unknown[]) => void;
+  destroy: ReturnType<typeof vi.fn>; register: ReturnType<typeof vi.fn>; connect: ReturnType<typeof vi.fn>; emitir: (e: string, ...a: unknown[]) => void;
 }
 const ultimoDispositivo = () => sdk.dispositivos[sdk.dispositivos.length - 1] as DispositivoSim;
 
@@ -138,13 +139,14 @@ describe('SoftphoneFalso', () => {
 });
 
 describe('SoftphoneTwilio', () => {
-  it('registra el dispositivo con códecs y closeProtection, y queda listo', async () => {
+  it('crea el dispositivo con códecs y closeProtection, sin registrarlo, y queda listo', async () => {
     const sp = new SoftphoneTwilio(tokenTwilio, async () => tokenTwilio);
     const lista = estados(sp);
     await sp.iniciar();
     const d = ultimoDispositivo();
     expect(d.token).toBe('jwt-1');
     expect(d.opciones).toEqual({ codecPreferences: ['opus', 'pcmu'], closeProtection: true });
+    expect(d.register).not.toHaveBeenCalled(); // solo hace falta para llamadas entrantes
     expect(lista).toEqual(['registrando', 'listo']);
   });
 

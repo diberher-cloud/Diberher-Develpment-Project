@@ -25,7 +25,7 @@ describe('Supervisión: nombre de la campaña en la llamada actual', () => {
     const m = simularFetch((url) => (url === '/api/v1/supervision/agentes' ? respuesta(200, respuestaActual) : undefined));
     renderizarAppTiempoReal('/supervision/agentes');
     await screen.findByRole('rowheader', { name: 'Pedro Agente' });
-    const ws = abrirSocket(2, 'supervisor');
+    const ws = await abrirSocket(2, 'supervisor');
 
     respuestaActual = durante; // lo que devolvería el servidor ahora
     const llamadasAntes = m.mock.calls.length;

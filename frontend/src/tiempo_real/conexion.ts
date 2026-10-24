@@ -1,4 +1,4 @@
-import { BASE_API } from '../api/cliente';
+import { BASE_API, ErrorApi } from '../api/cliente';
 import type { EventoTiempoReal } from '../api/tipos';
 
 export type EstadoConexion = 'conectando' | 'conectada' | 'reconectando' | 'cerrada';
@@ -16,7 +16,8 @@ export interface SocketMinimo {
 }
 
 export interface OpcionesConexion {
-  token: string;
+  /** Pide un ticket de un solo uso (`POST /ws/ticket`). Se invoca antes de CADA intento de conexión. */
+  obtenerTicket: () => Promise<{ ticket: string }>;
   alEvento: (evento: EventoTiempoReal) => void;
   alEstado?: (estado: EstadoConexion) => void;
   /** Se invoca al recibir `conexion.lista` en una reconexión (hay que recargar el estado por REST). */
@@ -31,9 +32,9 @@ export interface OpcionesConexion {
 
 export interface Conexion { cerrar: () => void }
 
-export function urlTiempoReal(token: string): string {
+export function urlTiempoReal(ticket: string): string {
   const esquema = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${esquema}://${window.location.host}${BASE_API}/ws?token=${encodeURIComponent(token)}`;
+  return `${esquema}://${window.location.host}${BASE_API}/ws?ticket=${encodeURIComponent(ticket)}`;
 }
 
 function esEvento(x: unknown): x is EventoTiempoReal {
@@ -46,7 +47,7 @@ function esEvento(x: unknown): x is EventoTiempoReal {
  */
 export function conectar(opciones: OpcionesConexion): Conexion {
   const {
-    token, alEvento, alEstado, alReconectar, alSesionInvalida,
+    obtenerTicket, alEvento, alEstado, alReconectar, alSesionInvalida,
     crearSocket = (url: string) => new WebSocket(url) as unknown as SocketMinimo,
     intervaloPingMs = 30_000, esperaInicialMs = 1_000, esperaMaximaMs = 30_000,
   } = opciones;
@@ -57,17 +58,34 @@ export function conectar(opciones: OpcionesConexion): Conexion {
   let temporizadorReconexion: ReturnType<typeof setTimeout> | undefined;
   let temporizadorPing: ReturnType<typeof setInterval> | undefined;
   let hubo = false; // ya hubo una conexión lista antes
+  let reintentoPor4401 = false; // tras un 4401 se pide un ticket nuevo una sola vez
 
   const pararPing = () => {
     if (temporizadorPing !== undefined) clearInterval(temporizadorPing);
     temporizadorPing = undefined;
   };
 
-  function abrir() {
+  function sesionInvalida() {
+    cerrada = true;
+    alEstado?.('cerrada');
+    alSesionInvalida();
+  }
+
+  async function abrir() {
     alEstado?.(hubo ? 'reconectando' : 'conectando');
+    let ticket: string;
+    try {
+      ticket = (await obtenerTicket()).ticket;
+    } catch (e) {
+      if (cerrada) return;
+      if (e instanceof ErrorApi && e.status === 401) sesionInvalida();
+      else programarReconexion();
+      return;
+    }
+    if (cerrada) return;
     let s: SocketMinimo;
     try {
-      s = crearSocket(urlTiempoReal(token));
+      s = crearSocket(urlTiempoReal(ticket));
     } catch {
       programarReconexion();
       return;
@@ -98,6 +116,7 @@ export function conectar(opciones: OpcionesConexion): Conexion {
         alEstado?.('conectada');
         const reconexion = hubo;
         hubo = true;
+        reintentoPor4401 = false;
         alEvento(msg);
         if (reconexion) alReconectar?.();
         return;
@@ -109,9 +128,12 @@ export function conectar(opciones: OpcionesConexion): Conexion {
       if (socket === s) socket = null;
       if (cerrada) return;
       if (ev.code === CODIGO_TOKEN_INVALIDO) {
-        cerrada = true;
-        alEstado?.('cerrada');
-        alSesionInvalida();
+        if (reintentoPor4401) {
+          sesionInvalida();
+        } else {
+          reintentoPor4401 = true;
+          void abrir(); // un ticket nuevo, una sola vez
+        }
         return;
       }
       programarReconexion();
@@ -126,10 +148,10 @@ export function conectar(opciones: OpcionesConexion): Conexion {
     alEstado?.('reconectando');
     const retraso = espera;
     espera = Math.min(espera * 2, esperaMaximaMs);
-    temporizadorReconexion = setTimeout(abrir, retraso);
+    temporizadorReconexion = setTimeout(() => void abrir(), retraso);
   }
 
-  abrir();
+  void abrir();
 
   return {
     cerrar() {

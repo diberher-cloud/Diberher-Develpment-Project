@@ -150,3 +150,6 @@ export type EventoTiempoReal =
   | { tipo: 'agente.estado'; datos: { usuario_id: number; estado: EstadoAgenteValor; desde: string; motivo_pausa: MotivoPausa | null; llamada_id: number | null }; emitido_en: string }
   | { tipo: 'llamada.estado'; datos: { llamada_id: number; usuario_id: number; campana_id: number; campana_cliente_id: number; estado: EstadoLlamada; motivos: Motivo<CodigoMotivoBloqueo>[] }; emitido_en: string }
   | { tipo: 'consola.registro'; datos: { campana_id: number; campana_cliente_id: number | null; accion: 'reservado' | 'liberado' | 'gestionado' | 'asignacion' }; emitido_en: string };
+
+/** `POST /ws/ticket`: ticket de un solo uso; `expira_en` en segundos. */
+export interface TicketWs { ticket: string; expira_en: number }

@@ -5,7 +5,7 @@ import type {
   ResultadoEvaluacion, ResultadoImportacionExclusiones, Rol, Severidad, TipoCampana, Usuario,
   ConfiguracionPolitica, AgenteAsignado, AgenteSupervision, CambioEstadoAgente, Canal, CampanaConsola,
   EstadoAgente, EventoSimulacion, FichaCliente, Llamada, OrigenGestion, RegistroTrabajo, ResultadoSimulacion,
-  ResultadoTipificacion, TipificacionCrear, Tipificacion, TokenTelefonia,
+  ResultadoTipificacion, TipificacionCrear, Tipificacion, TokenTelefonia, TicketWs,
 } from './tipos';
 
 export interface ParamsPagina { page?: number; page_size?: number }
@@ -106,3 +106,6 @@ export const simularLlamada = (c: { campana_cliente_id: number; telefono_id: num
   solicitar<ResultadoSimulacion>('POST', '/telefonia/simulacion/llamadas', { cuerpo: c });
 export const simularEventoLlamada = (llamadaId: number, e: EventoSimulacion) =>
   solicitar<void>('POST', `/telefonia/simulacion/llamadas/${llamadaId}/eventos`, { cuerpo: e });
+
+// Tiempo real: ticket de un solo uso para abrir el WebSocket
+export const obtenerTicketWs = () => solicitar<TicketWs>('POST', '/ws/ticket');

@@ -27,9 +27,6 @@ export class SoftphoneTwilio implements Softphone {
         closeProtection: true,
       });
       this.device = device;
-      device.on('registered', () => {
-        if (this.emisor.estado === 'registrando') this.emisor.emitir('listo');
-      });
       device.on('error', (error: { message?: string }) => {
         this.emisor.emitir('error', error?.message ?? 'Error del dispositivo de voz.');
       });
@@ -39,8 +36,8 @@ export class SoftphoneTwilio implements Softphone {
           () => this.emisor.emitir('error', 'No se pudo renovar el token de telefonía.'),
         );
       });
-      await device.register();
-      if (this.emisor.estado === 'registrando') this.emisor.emitir('listo');
+      // No se llama a `device.register()`: solo sirve para llamadas entrantes (el token lleva incoming_allow=False).
+      this.emisor.emitir('listo');
     } catch (e) {
       this.emisor.emitir('error', e instanceof Error ? e.message : 'No se pudo iniciar el softphone.');
     }

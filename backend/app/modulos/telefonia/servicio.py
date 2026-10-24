@@ -14,8 +14,9 @@ from app.catalogos import ESTADOS_LLAMADA_TERMINALES
 from app.config import get_settings
 from app.modulos.auditoria import servicio as auditoria
 from app.modulos.campanas.modelos import Campana, CampanaAgente
-from app.modulos.clientes.modelos import CampanaCliente, Telefono
+from app.modulos.clientes.modelos import CampanaCliente, Cliente, Telefono
 from app.modulos.consola import estado as estado_agente
+from app.modulos.consola.modelos import EstadoAgente
 from app.modulos.consola.servicio import exclusiones_de, reserva_vigente
 from app.modulos.cumplimiento import servicio as cumplimiento
 from app.modulos.telefonia import twiml
@@ -123,6 +124,17 @@ def procesar_saliente(
         logger.warning("TwiML saliente rechazado: PARAMETROS_INVALIDOS")
         rechazo.motivos = [_motivo("PARAMETROS_INVALIDOS", "Parámetros inválidos.")]
         return rechazo
+
+    # B4: serializa las llamadas simultáneas del mismo agente y del mismo cliente. Orden fijo de
+    # bloqueo (estados_agente, luego clientes) y lectura fresca tras obtener los bloqueos.
+    db.scalars(
+        select(EstadoAgente)
+        .where(EstadoAgente.usuario_id == agente.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    db.execute(select(Cliente.id).where(Cliente.id == cc.cliente_id).with_for_update()).all()
+    db.refresh(cc)
 
     # 4. idempotencia por CallSid
     existente = db.scalar(select(Llamada).where(Llamada.call_sid == call_sid))
@@ -282,22 +294,32 @@ def finalizar(
     estado_proveedor: str,
     duracion: int | None,
     ahora: datetime,
+    contestada: bool = False,
 ) -> bool:
     """Finalización idempotente: gana la primera señal terminal. Devuelve True si finalizó.
 
     El UPDATE es condicional (`estado` no terminal), así que dos señales simultáneas no pueden
-    finalizar dos veces: la perdedora ve 0 filas y no hace nada.
+    finalizar dos veces: la perdedora ve 0 filas y no hace nada. `contestada=True` indica que
+    el proveedor informa de tiempo de conversación (p. ej. `DialCallDuration > 0`) aunque se
+    haya perdido el callback `answered`.
     """
+    db.flush()
+    db.refresh(llamada)
     if llamada.estado in ESTADOS_LLAMADA_TERMINALES:
         return False
-    nuevo = _estado_final(estado_proveedor, llamada.contestada_en is not None)
+    contestada_en = llamada.contestada_en
+    if contestada_en is None and contestada and duracion:
+        contestada_en = ahora - timedelta(seconds=duracion)
+    nuevo = _estado_final(estado_proveedor, contestada_en is not None)
     if duracion is not None:
         segundos: int | None = max(duracion, 0)
-    elif llamada.contestada_en is not None:
-        segundos = max(int((ahora - llamada.contestada_en).total_seconds()), 0)
+    elif contestada_en is not None:
+        segundos = max(int((ahora - contestada_en).total_seconds()), 0)
     else:
         segundos = None
     valores: dict[str, Any] = {"estado": nuevo, "finalizada_en": ahora}
+    if contestada_en is not None:
+        valores["contestada_en"] = contestada_en
     if segundos is not None:
         valores["duracion_segundos"] = segundos
     ganada = db.execute(
@@ -306,11 +328,14 @@ def finalizar(
         .values(**valores)
         .execution_options(synchronize_session=False)
     )
-    if ganada.rowcount != 1:
-        db.refresh(llamada)
-        return False
     db.refresh(llamada)
+    if ganada.rowcount != 1:
+        return False
     if llamada.usuario_id is not None:
+        # B2: el registro sigue protegido (reserva renovada) hasta que el agente tipifique.
+        cc = db.get(CampanaCliente, llamada.campana_cliente_id)
+        if cc is not None and cc.reservado_por == llamada.usuario_id:
+            cc.reservado_hasta = ahora + timedelta(minutes=get_settings().consola_reserva_minutos)
         estado_agente.fijar(db, llamada.usuario_id, "tipificando", ahora, llamada_id=llamada.id)
     _publicar_llamada(db, llamada, _campana_de(db, llamada))
     return True
@@ -381,14 +406,17 @@ def _datos_evento(params: dict[str, str]) -> dict[str, Any]:
 
 
 def _localizar(db: Session, llamada_id: str | None, call_sid: str) -> Llamada | None:
+    """Carga la llamada con bloqueo de fila (`FOR UPDATE`) y datos frescos: serializa los
+    webhooks de una misma llamada."""
     lid = _entero(llamada_id)
+    consulta = select(Llamada)
     if lid is not None:
-        return db.get(Llamada, lid)
-    return db.scalar(
-        select(Llamada).where(
+        consulta = consulta.where(Llamada.id == lid)
+    else:
+        consulta = consulta.where(
             (Llamada.call_sid == call_sid) | (Llamada.call_sid_cliente == call_sid)
         )
-    )
+    return db.scalar(consulta.with_for_update().execution_options(populate_existing=True).limit(1))
 
 
 def procesar_estado(
@@ -413,24 +441,38 @@ def procesar_estado(
         db.rollback()
         return
     _renovar_reserva(db, llamada, ahora)
-    aplicar_estado(db, llamada, estado, _entero_opcional(params.get("CallDuration")), ahora)
+    # La duración válida es la de la pierna del cliente; la del agente incluye el marcado.
+    duracion = _entero_opcional(params.get("CallDuration")) if es_cliente else None
+    aplicar_estado(db, llamada, estado, duracion, ahora)
     db.commit()
+
+
+def _transicion(
+    db: Session,
+    llamada: Llamada,
+    nuevo: str,
+    desde: tuple[str, ...],
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """UPDATE condicional: nunca sale de un estado terminal ni retrocede."""
+    r = db.execute(
+        update(Llamada)
+        .where(Llamada.id == llamada.id, Llamada.estado.in_(desde))
+        .values(estado=nuevo, **(extra or {}))
+        .execution_options(synchronize_session=False)
+    )
+    db.refresh(llamada)
+    if r.rowcount == 1:
+        _publicar_llamada(db, llamada, _campana_de(db, llamada))
 
 
 def aplicar_estado(
     db: Session, llamada: Llamada, estado: str, duracion: int | None, ahora: datetime
 ) -> None:
-    if llamada.estado in ESTADOS_LLAMADA_TERMINALES:
-        return
     if estado == "ringing":
-        if llamada.estado == "iniciando":
-            llamada.estado = "sonando"
-            _publicar_llamada(db, llamada, _campana_de(db, llamada))
+        _transicion(db, llamada, "sonando", ("iniciando",))
     elif estado in ("in-progress", "answered"):
-        if llamada.estado in ("iniciando", "sonando"):
-            llamada.estado = "en_curso"
-            llamada.contestada_en = ahora
-            _publicar_llamada(db, llamada, _campana_de(db, llamada))
+        _transicion(db, llamada, "en_curso", ("iniciando", "sonando"), {"contestada_en": ahora})
     elif estado in _TERMINALES_PROVEEDOR:
         finalizar(db, llamada, estado, duracion, ahora)
 
@@ -455,7 +497,16 @@ def procesar_dial_terminado(
         if existe is None:
             llamada.call_sid_cliente = dial_sid
     if estado in _TERMINALES_PROVEEDOR:
-        finalizar(db, llamada, estado, _entero_opcional(params.get("DialCallDuration")), ahora)
+        duracion = _entero_opcional(params.get("DialCallDuration"))
+        # S2: `completed` con tiempo de conversación cuenta como contestada.
+        finalizar(
+            db,
+            llamada,
+            estado,
+            duracion,
+            ahora,
+            contestada=estado == "completed" and bool(duracion),
+        )
     db.commit()
 
 

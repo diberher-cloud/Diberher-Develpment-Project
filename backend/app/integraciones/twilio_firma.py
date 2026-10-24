@@ -12,10 +12,12 @@ from collections.abc import Mapping, Sequence
 
 def firma_twilio(url: str, params: Mapping[str, str | Sequence[str]], auth_token: str) -> str:
     texto = url
-    for clave in sorted(params):
+    # Igual que `twilio.request_validator`: claves y valores únicos y ordenados (un valor
+    # repetido idéntico se cuenta una sola vez).
+    for clave in sorted(set(params)):
         valor = params[clave]
-        valores = [valor] if isinstance(valor, str) else sorted(valor)
-        for v in valores:
+        valores = [valor] if isinstance(valor, str) else valor
+        for v in sorted(set(valores)):
             texto += clave + v
     digest = hmac.new(auth_token.encode(), texto.encode(), hashlib.sha1).digest()
     return base64.b64encode(digest).decode()

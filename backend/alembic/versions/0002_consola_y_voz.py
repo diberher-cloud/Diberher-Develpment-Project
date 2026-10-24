@@ -18,6 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    _crear_tickets_ws()
     # campana_clientes primero: las tablas nuevas la referencian y batch la recrea en SQLite.
     with op.batch_alter_table("campana_clientes", schema=None) as batch_op:
         batch_op.add_column(sa.Column("reservado_por", sa.Integer(), nullable=True))
@@ -29,6 +30,7 @@ def upgrade() -> None:
         batch_op.create_index(
             "ix_campana_clientes_campana_id_estado", ["campana_id", "estado"], unique=False
         )
+        batch_op.create_index("ix_campana_clientes_reservado_por", ["reservado_por"], unique=False)
         batch_op.create_foreign_key(
             batch_op.f("fk_campana_clientes_reservado_por_usuarios"),
             "usuarios",
@@ -191,6 +193,9 @@ def upgrade() -> None:
     with op.batch_alter_table("llamadas", schema=None) as batch_op:
         batch_op.create_index(
             batch_op.f("ix_llamadas_campana_cliente_id"), ["campana_cliente_id"], unique=False
+        )
+        batch_op.create_index(
+            "ix_llamadas_usuario_id_estado", ["usuario_id", "estado"], unique=False
         )
 
     op.create_table(
@@ -383,7 +388,26 @@ def upgrade() -> None:
         )
 
 
+def _crear_tickets_ws() -> None:
+    op.create_table(
+        "tickets_ws",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("ticket_hash", sa.String(length=64), nullable=False),
+        sa.Column("usuario_id", sa.Integer(), nullable=False),
+        sa.Column("expira_en", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("sesion_expira_en", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("usado_en", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("creado_en", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["usuario_id"], ["usuarios.id"], name=op.f("fk_tickets_ws_usuario_id_usuarios")
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_tickets_ws")),
+        sa.UniqueConstraint("ticket_hash", name=op.f("uq_tickets_ws_ticket_hash")),
+    )
+
+
 def downgrade() -> None:
+    op.drop_table("tickets_ws")
     with op.batch_alter_table("ventas", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_ventas_campana_cliente_id"))
 
@@ -406,6 +430,7 @@ def downgrade() -> None:
     op.drop_table("eventos_llamada")
     op.drop_table("estados_agente")
     with op.batch_alter_table("llamadas", schema=None) as batch_op:
+        batch_op.drop_index("ix_llamadas_usuario_id_estado")
         batch_op.drop_index(batch_op.f("ix_llamadas_campana_cliente_id"))
 
     op.drop_table("llamadas")
@@ -426,6 +451,7 @@ def downgrade() -> None:
         batch_op.drop_constraint(
             batch_op.f("fk_campana_clientes_reservado_por_usuarios"), type_="foreignkey"
         )
+        batch_op.drop_index("ix_campana_clientes_reservado_por")
         batch_op.drop_index("ix_campana_clientes_campana_id_estado")
         batch_op.drop_column("ultima_gestion_en")
         batch_op.drop_column("ultimo_resultado")

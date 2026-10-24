@@ -9,13 +9,25 @@ from typing import Any
 logger = logging.getLogger("app")
 
 TIPOS_DE_AGENTE = {"agente.estado", "llamada.estado"}
+MAX_COLA = 1000
 
 
 @dataclass(eq=False)
 class Conexion:
     usuario_id: int
     rol: str
-    cola: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
+    cola: asyncio.Queue[dict[str, Any]] = field(
+        default_factory=lambda: asyncio.Queue(maxsize=MAX_COLA)
+    )
+    desbordada: bool = False
+
+    def encolar(self, evento: dict[str, Any]) -> None:
+        """Se ejecuta en el bucle del socket; si la cola se llena, marca la conexión para cerrarla
+        (un cliente lento no puede acumular memoria sin límite)."""
+        try:
+            self.cola.put_nowait(evento)
+        except asyncio.QueueFull:
+            self.desbordada = True
 
 
 def debe_recibir(conexion: Conexion, evento: dict[str, Any]) -> bool:
@@ -62,7 +74,7 @@ class GestorConexiones:
         for conexion in list(self.conexiones):
             if debe_recibir(conexion, evento):
                 try:
-                    bucle.call_soon_threadsafe(conexion.cola.put_nowait, evento)
+                    bucle.call_soon_threadsafe(conexion.encolar, evento)
                 except RuntimeError:  # bucle cerrado
                     return
 
