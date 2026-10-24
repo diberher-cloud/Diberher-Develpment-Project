@@ -2,14 +2,17 @@ export const ZONA = 'America/Bogota';
 export const OFFSET_BOGOTA = '-05:00';
 export const MAX_BYTES_ARCHIVO = 10 * 1024 * 1024; // 10 MiB
 
-const monedaCOP = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' });
+const monedaCOP = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const monedaCOPCentavos = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fechaHora = new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, dateStyle: 'medium', timeStyle: 'short' });
 
 /** Formatea un monto (string decimal de la API o número) como COP. */
 export function formatearCOP(valor: string | number | null | undefined): string {
   if (valor === null || valor === undefined || valor === '') return '—';
   const n = typeof valor === 'number' ? valor : Number(valor);
-  return Number.isFinite(n) ? monedaCOP.format(n) : String(valor);
+  if (!Number.isFinite(n)) return String(valor);
+  // Igual que el guion del servidor: sin decimales si son ",00"; con 2 decimales en otro caso.
+  return Math.round(n * 100) % 100 === 0 ? monedaCOP.format(Math.round(n)) : monedaCOPCentavos.format(n);
 }
 
 /** Fecha-hora ISO con zona -> texto en America/Bogota. */

@@ -15,7 +15,9 @@ export function Login() {
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<ErrorApi | null>(null);
 
-  const destino = (ubicacion.state as { desde?: string } | null)?.desde ?? '/campanas';
+  const desde = (ubicacion.state as { desde?: string } | null)?.desde;
+  const destinoPara = (rol?: string) => desde ?? (rol === 'agente' ? '/consola' : '/campanas');
+  const destino = destinoPara(usuario?.rol);
   if (usuario) return <Navigate to={destino} replace />;
 
   async function enviar(e: FormEvent) {
@@ -23,8 +25,8 @@ export function Login() {
     setEnviando(true);
     setError(null);
     try {
-      await login(email.trim(), password);
-      navegar(destino, { replace: true });
+      const u = await login(email.trim(), password);
+      navegar(destinoPara(u.rol), { replace: true });
     } catch (err) {
       setError(comoErrorApi(err));
       setEnviando(false);

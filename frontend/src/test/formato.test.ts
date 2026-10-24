@@ -20,6 +20,8 @@ describe('formato', () => {
   it('formatearCOP usa es-CO y acepta strings decimales de la API', () => {
     expect(formatearCOP('1500000.00').replace(/\s/g, ' ')).toMatch(/^\$\s?1\.500\.000(,00)?$/);
     expect(formatearCOP('250000.50').replace(/\s/g, ' ')).toMatch(/250\.000,50/);
+    expect(formatearCOP('250000.50').replace(/\s/g, ' ')).toBe('$ 250.000,50');
+    expect(formatearCOP('1500000.00').replace(/\s/g, ' ')).toBe('$ 1.500.000');
     expect(formatearCOP(null)).toBe('—');
     expect(formatearCOP(undefined)).toBe('—');
     expect(formatearCOP('')).toBe('—');

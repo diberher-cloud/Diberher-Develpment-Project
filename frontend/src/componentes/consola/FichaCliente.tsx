@@ -3,6 +3,9 @@ import { ETIQUETA_TIPO } from '../../utilidades/campanas';
 import { ETIQUETA_RESULTADO } from '../../utilidades/tipificacion';
 import { formatearCOP, formatearFecha, formatearFechaHora } from '../../utilidades/formato';
 
+/** Añade el punto final solo si el texto no termina ya en punto ("p. m."). */
+const conPunto = (t: string) => (t.endsWith('.') ? t : `${t}.`);
+
 /** Datos del cliente y de la obligación. Los teléfonos se muestran siempre enmascarados. */
 export function FichaCliente({ ficha: f }: { ficha: Ficha }) {
   const cobranza = f.campana.tipo === 'cobranza';
@@ -63,7 +66,7 @@ export function FichaCliente({ ficha: f }: { ficha: Ficha }) {
       <div className={`alerta ${c.permitido ? 'alerta-ok' : 'alerta-error'}`}>
         <p>
           {c.permitido ? 'Se puede contactar al cliente ahora.' : 'No se puede contactar al cliente ahora.'}{' '}
-          Hora de Bogotá: {formatearFechaHora(c.momento_local)}.
+          Hora de Bogotá: {conPunto(formatearFechaHora(c.momento_local))}
         </p>
         {c.motivos.length > 0 && (
           <ul>
@@ -72,7 +75,7 @@ export function FichaCliente({ ficha: f }: { ficha: Ficha }) {
             ))}
           </ul>
         )}
-        {c.proxima_ventana_inicio && <p>Próxima ventana: {formatearFechaHora(c.proxima_ventana_inicio)}.</p>}
+        {c.proxima_ventana_inicio && <p>Próxima ventana: {conPunto(formatearFechaHora(c.proxima_ventana_inicio))}</p>}
       </div>
     </section>
   );

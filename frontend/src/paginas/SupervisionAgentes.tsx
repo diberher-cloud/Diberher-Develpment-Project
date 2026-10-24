@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listarAgentesSupervision } from '../api/endpoints';
 import type { AgenteSupervision, EstadoAgenteValor, EstadoLlamada } from '../api/tipos';
 import { Cargando } from '../componentes/Cargando';
@@ -44,21 +44,28 @@ export function SupervisionAgentes() {
     if (e.tipo !== 'llamada.estado') return;
     const d = e.datos;
     const terminal = TERMINALES.includes(d.estado);
-    let nombreDesconocido = false;
     setAgentes((lista) =>
       lista.map((a) => {
         if (a.usuario_id !== d.usuario_id) return a;
         if (terminal) return { ...a, llamada: null };
         const nombre = a.llamada?.campana_id === d.campana_id ? a.llamada.campana_nombre : undefined;
-        if (nombre === undefined) nombreDesconocido = true;
         return {
           ...a,
           llamada: { id: d.llamada_id, estado: d.estado, campana_id: d.campana_id, campana_nombre: nombre ?? `Campaña #${d.campana_id}` },
         };
       }),
     );
-    if (nombreDesconocido) recargar();
   });
+
+  // Llamadas cuyo nombre de campaña aún se desconoce (el evento solo trae el id): se recarga por REST una vez por llamada.
+  const recargadas = useRef(new Set<number>());
+  useEffect(() => {
+    const falta = agentes.find((a) => a.llamada && a.llamada.campana_nombre === `Campaña #${a.llamada.campana_id}`);
+    if (falta?.llamada && !recargadas.current.has(falta.llamada.id)) {
+      recargadas.current.add(falta.llamada.id);
+      recargar();
+    }
+  }, [agentes, recargar]);
 
   const conteo = ORDEN_ESTADOS.map((s) => [s, agentes.filter((a) => a.estado === s).length] as const);
 
