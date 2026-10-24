@@ -206,3 +206,85 @@ def test_b2_tomar_concurrente_con_la_finalizacion_no_roba_el_registro(pg, monkey
         with pytest.raises(Exception) as e:
             consola.tomar(s, s.get(Usuario, a2_id), cc_id, tarde)
         assert getattr(e.value, "codigo", None) == "REGISTRO_RESERVADO"
+
+
+def test_tomar_y_desasignar_a_la_vez_sin_interbloqueo_ni_500(pg):
+    from escenario import cab
+    from fastapi.testclient import TestClient as TC
+
+    for ronda in range(8):
+        with pg() as db:
+            admin = _usuario(db, "administrador", 500 + ronda)
+            ag = _usuario(db, "agente", 600 + ronda)
+            esc = Escenario(db, admin.id)
+            camp = esc.campana()
+            esc.asignar(camp, ag)
+            x, y = esc.registro(camp), esc.registro(camp)
+            esc.reservar(x, ag, AHORA)
+            ha, hg = cab(admin), cab(ag)
+            cid, y_id, uid = camp.id, y.id, ag.id
+        barrera = threading.Barrier(2, timeout=10)
+
+        def quitar():
+            with TC(app) as c:
+                barrera.wait()
+                return c.put(
+                    f"/api/v1/campanas/{cid}/agentes", json={"usuario_ids": []}, headers=ha
+                )
+
+        def tomar():
+            with TC(app) as c:
+                barrera.wait()
+                return c.post(f"/api/v1/consola/registros/{y_id}/tomar", headers=hg)
+
+        r = _en_hilos([quitar, tomar])
+        assert all(not isinstance(x, BaseException) for x in r), r
+        assert r[0].status_code == 200, r[0].text
+        assert r[1].status_code in (200, 403), r[1].text  # nunca 500 ni 40P01
+        with pg() as s:
+            reservados = s.scalar(select(func.count()).where(CampanaCliente.reservado_por == uid))
+            # Desasignado: ninguna reserva suya sobrevive (la de Y se libera aunque ganara tomar).
+            assert reservados == 0, (ronda, r[1].status_code)
+
+
+def test_tipificar_y_nueva_llamada_del_mismo_agente_no_se_interbloquean(pg):
+    from escenario import cab
+
+    with pg() as db:
+        admin = _usuario(db, "administrador", 0)
+        ag = _usuario(db, "agente", 1)
+        esc = Escenario(db, admin.id)
+        camp = esc.campana()
+        esc.asignar(camp, ag)
+        cc = esc.registro(camp)
+        esc.estado(ag, "disponible", AHORA)
+        esc.reservar(cc, ag, AHORA)
+        ids = (ag.id, cc.id, telefono_de(db, cc).id)
+        hg = cab(ag)
+    res = _saliente(pg, *ids, "CAtip")
+    with TestClient(app) as c:
+        c.post(
+            f"/api/v1/telefonia/simulacion/llamadas/{res.llamada_id}/eventos",
+            json={"evento": "finalizada", "resultado": "busy"},
+            headers=hg,
+        )
+    barrera = threading.Barrier(2, timeout=10)
+
+    def tipificar_():
+        with TestClient(app) as c:
+            barrera.wait()
+            return c.post(
+                "/api/v1/consola/tipificaciones",
+                json={"llamada_id": res.llamada_id, "resultado": "no_contesta"},
+                headers=hg,
+            )
+
+    def llamar_():
+        barrera.wait()
+        return _saliente(pg, *ids, "CAtip2")
+
+    r = _en_hilos([tipificar_, llamar_])
+    assert all(not isinstance(x, BaseException) for x in r), r
+    assert r[0].status_code == 201, r[0].text
+    with pg() as s:
+        assert s.get(CampanaCliente, ids[1]).intentos == 1

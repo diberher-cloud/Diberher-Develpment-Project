@@ -221,6 +221,24 @@ def llamada_pendiente_en_registro(db: Session, cc_id: int, usuario_id: int | Non
     return db.scalars(consulta.limit(1)).first()
 
 
+def _bloquear_asignacion(db: Session, usuario_id: int, registro_id: int) -> bool:
+    """`FOR SHARE` sobre la asignación agente-campaña del registro; False si no existe."""
+    return (
+        db.scalar(
+            select(CampanaAgente.id)
+            .where(
+                CampanaAgente.usuario_id == usuario_id,
+                CampanaAgente.campana_id
+                == select(CampanaCliente.campana_id)
+                .where(CampanaCliente.id == registro_id)
+                .scalar_subquery(),
+            )
+            .with_for_update(read=True)
+        )
+        is not None
+    )
+
+
 def _reservar_atomico(
     db: Session, registro_id: int, usuario_id: int, ahora: datetime, hasta: datetime
 ) -> bool:
@@ -229,18 +247,7 @@ def _reservar_atomico(
     S1: antes toma `FOR SHARE` sobre la fila de asignación (si no existe, no reserva): quitar la
     asignación espera a que esta transacción confirme y entonces libera la reserva recién hecha.
     """
-    asignacion = db.scalar(
-        select(CampanaAgente.id)
-        .where(
-            CampanaAgente.usuario_id == usuario_id,
-            CampanaAgente.campana_id
-            == select(CampanaCliente.campana_id)
-            .where(CampanaCliente.id == registro_id)
-            .scalar_subquery(),
-        )
-        .with_for_update(read=True)
-    )
-    if asignacion is None:
+    if not _bloquear_asignacion(db, usuario_id, registro_id):
         return False
     resultado = db.execute(
         update(CampanaCliente)
@@ -293,6 +300,12 @@ def tomar(db: Session, usuario: Usuario, registro_id: int, ahora: datetime) -> F
         raise ErrorApp(409, "AGENTE_EN_LLAMADA", "El agente está en una llamada.")
     if estado == "tipificando" or estado_agente.llamada_sin_tipificar(db, usuario.id):
         raise ErrorApp(409, "TIPIFICACION_PENDIENTE", "Debe tipificar la llamada anterior primero.")
+
+    # Primero el bloqueo de la asignación (igual que `asignar_agentes`): ambos caminos toman
+    # campana_agentes antes que las filas de campana_clientes y no hay ciclo de espera.
+    if not _bloquear_asignacion(db, usuario.id, cc.id):
+        db.rollback()
+        raise _no_asignada()
 
     # Una reserva por agente: libera cualquier otra.
     otras = db.scalars(

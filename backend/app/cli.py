@@ -59,6 +59,32 @@ def generar(args: argparse.Namespace) -> int:
     return 0
 
 
+def liberar_gestion(args: argparse.Namespace) -> int:
+    """Soporte: tipifica como `sistema` una llamada que su agente no tipificó."""
+    from app.modulos.consola.tipificacion import tipificar_sistema
+    from app.modulos.telefonia import servicio as telefonia
+    from app.modulos.telefonia.modelos import Llamada
+    from app.reloj import ahora
+
+    with bd.SessionLocal() as db:
+        llamada = db.get(Llamada, args.llamada_id)
+        if llamada is None:
+            print("Llamada no encontrada.", file=sys.stderr)
+            return 1
+        try:
+            if llamada.estado in ("iniciando", "sonando", "en_curso"):
+                # Llamada atascada (webhooks perdidos): se cierra como fallida antes de tipificar.
+                telefonia.finalizar(db, llamada, "failed", None, ahora())
+                db.commit()
+            tipificar_sistema(db, args.llamada_id, args.resultado, ahora())
+            # La auditoría `consola.tipificacion_sistema` la escribe el propio servicio.
+        except ErrorApp as exc:
+            print(f"{exc.codigo}: {exc.mensaje}", file=sys.stderr)
+            return 1
+    print(f"Llamada {args.llamada_id} tipificada como '{args.resultado}' (sistema).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -70,6 +96,14 @@ def main(argv: list[str] | None = None) -> int:
     p_fest.add_argument("--desde", type=int, required=True)
     p_fest.add_argument("--hasta", type=int, required=True)
     p_fest.set_defaults(func=generar)
+    p_lib = sub.add_parser(
+        "liberar-gestion", help="Tipifica como sistema una llamada que el agente no tipificó"
+    )
+    p_lib.add_argument("--llamada-id", type=int, required=True)
+    p_lib.add_argument(
+        "--resultado", required=True, choices=["no_contesta", "numero_errado", "contactado"]
+    )
+    p_lib.set_defaults(func=liberar_gestion)
     args = parser.parse_args(argv)
     return args.func(args)
 

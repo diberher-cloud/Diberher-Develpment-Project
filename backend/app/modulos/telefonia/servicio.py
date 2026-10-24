@@ -16,7 +16,6 @@ from app.modulos.auditoria import servicio as auditoria
 from app.modulos.campanas.modelos import Campana, CampanaAgente
 from app.modulos.clientes.modelos import CampanaCliente, Cliente, Telefono
 from app.modulos.consola import estado as estado_agente
-from app.modulos.consola.modelos import EstadoAgente
 from app.modulos.consola.servicio import exclusiones_de, reserva_vigente
 from app.modulos.cumplimiento import servicio as cumplimiento
 from app.modulos.telefonia import twiml
@@ -127,12 +126,7 @@ def procesar_saliente(
 
     # B4: serializa las llamadas simultáneas del mismo agente y del mismo cliente. Orden fijo de
     # bloqueo (estados_agente, luego clientes) y lectura fresca tras obtener los bloqueos.
-    db.scalars(
-        select(EstadoAgente)
-        .where(EstadoAgente.usuario_id == agente.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    ).all()
+    estado_agente.bloquear(db, agente.id)
     db.execute(select(Cliente.id).where(Cliente.id == cc.cliente_id).with_for_update()).all()
     db.refresh(cc)
 

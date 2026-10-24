@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.errores import ErrorApp
 from app.modulos.auditoria import servicio as auditoria
+from app.modulos.consola import estado as estado_agente
 from app.modulos.usuarios.esquemas import UsuarioActualizar, UsuarioCrear
 from app.modulos.usuarios.modelos import Usuario
 from app.paginacion import ParamsPaginacion, paginar
@@ -67,6 +68,14 @@ def actualizar(db: Session, usuario_id: int, datos: UsuarioActualizar, actor: Us
         if "rol" in cambios and cambios["rol"] != "administrador":
             raise ErrorApp(
                 409, "NO_PUEDE_DESACTIVARSE", "No puede quitarse el rol de administrador."
+            )
+    if cambios.get("activo") is False and usuario.activo and usuario.rol == "agente":
+        if estado_agente.gestion_pendiente(db, usuario.id) is not None:
+            raise ErrorApp(
+                409,
+                "USUARIO_CON_GESTION_PENDIENTE",
+                "El agente tiene llamadas activas o sin tipificar; resuélvalas antes de "
+                "desactivarlo.",
             )
     campos = []
     for campo, valor in cambios.items():

@@ -237,12 +237,17 @@ def test_doble_tipificacion_concurrente_exactamente_una_gana(pg, monkeypatch):
     from app.modulos.consola import tipificacion as mod
     from app.modulos.cumplimiento import servicio as cumplimiento_servicio
 
-    barrera = threading.Barrier(2, timeout=10)
+    barrera = threading.Barrier(2, timeout=1.5)
     original = cumplimiento_servicio.cargar_politica
 
     def con_barrera(*a, **kw):
-        # Se llama tras la comprobación de "sin tipificación previa" y antes de insertar.
-        barrera.wait()
+        # Se llama tras la comprobación de "sin tipificación previa". Desde la revisión 2 el
+        # segundo hilo espera antes (FOR UPDATE de estados_agente/clientes), así que la barrera
+        # es oportunista: si se rompe por tiempo, ambos siguen y el resultado no cambia.
+        try:
+            barrera.wait()
+        except threading.BrokenBarrierError:
+            pass
         return original(*a, **kw)
 
     monkeypatch.setattr(mod.cumplimiento, "cargar_politica", con_barrera)
@@ -506,7 +511,10 @@ def test_tomar_y_quitar_asignacion_a_la_vez_no_deja_reserva_de_un_agente_desasig
 
     def reservar_tras_quitar(*args, **kw):
         validado.set()  # ya pasó la comprobación de asignación
-        assert quitado.wait(10)  # el supervisor desasigna y confirma antes de reservar
+        # Desde la revisión 2 `tomar` ya tiene FOR SHARE sobre la asignación, así que el
+        # supervisor espera a que `tomar` confirme (no se interbloquean): se espera un momento y
+        # se continúa; lo que se comprueba al final es que no queda reserva de un desasignado.
+        quitado.wait(2)
         return original(*args, **kw)
 
     monkeypatch.setattr(consola, "_reservar_atomico", reservar_tras_quitar)

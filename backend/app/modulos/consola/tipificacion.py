@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -90,8 +90,34 @@ def _validar_presencia(datos: TipificacionCrear) -> list[dict]:
 def tipificar(
     db: Session, usuario: Usuario, datos: TipificacionCrear, ahora: datetime
 ) -> TipificacionSalida:
+    return _tipificar(db, datos, ahora, agente_id=usuario.id, actor_id=usuario.id, origen="agente")
+
+
+def tipificar_sistema(
+    db: Session, llamada_id: int, resultado: str, ahora: datetime
+) -> TipificacionSalida:
+    """Tipificación de soporte (origen `sistema`, sin usuario) de una llamada que su agente no
+    tipificó. Aplica los mismos efectos que la del agente y libera su reserva."""
+    llamada = db.get(Llamada, llamada_id)
+    if llamada is None or llamada.usuario_id is None:
+        raise ErrorApp(404, "NO_ENCONTRADO", "Llamada no encontrada.")
+    datos = TipificacionCrear(llamada_id=llamada_id, resultado=resultado)  # type: ignore[arg-type]
+    return _tipificar(
+        db, datos, ahora, agente_id=llamada.usuario_id, actor_id=None, origen="sistema"
+    )
+
+
+def _tipificar(
+    db: Session,
+    datos: TipificacionCrear,
+    ahora: datetime,
+    *,
+    agente_id: int,
+    actor_id: int | None,
+    origen: str,
+) -> TipificacionSalida:
     llamada = db.get(Llamada, datos.llamada_id)
-    if llamada is None or llamada.usuario_id != usuario.id:
+    if llamada is None or llamada.usuario_id != agente_id:
         raise ErrorApp(404, "NO_ENCONTRADO", "Llamada no encontrada.")
     if llamada.estado not in ESTADOS_LLAMADA_TERMINALES:
         raise ErrorApp(409, "LLAMADA_EN_CURSO", "La llamada aún no ha terminado.")
@@ -104,6 +130,15 @@ def tipificar(
     campana = db.get(Campana, cc.campana_id) if cc else None
     if cc is None or campana is None:
         raise ErrorApp(404, "NO_ENCONTRADO", "Registro no encontrado.")
+
+    # Orden de bloqueo estados_agente -> clientes, el mismo que `procesar_saliente`, para no crear
+    # ciclos de espera entre una llamada nueva y una tipificación del mismo agente/cliente.
+    estado_agente.bloquear(db, agente_id)
+    db.execute(select(Cliente.id).where(Cliente.id == cc.cliente_id).with_for_update()).all()
+    db.refresh(cc)
+    if db.scalar(select(Tipificacion.id).where(Tipificacion.llamada_id == llamada.id)):
+        db.rollback()  # otra tipificación simultánea ganó mientras esperábamos el bloqueo
+        raise ErrorApp(409, "LLAMADA_YA_TIPIFICADA", "La llamada ya fue tipificada.")
 
     errores = _validar_presencia(datos)
     if errores:
@@ -214,8 +249,8 @@ def tipificar(
         tip = Tipificacion(
             campana_cliente_id=cc.id,
             canal="voz",
-            origen="agente",
-            usuario_id=usuario.id,
+            origen=origen,
+            usuario_id=actor_id,
             llamada_id=llamada.id,
             resultado=r,
             contacto_directo=efecto.contacto_directo,
@@ -235,7 +270,7 @@ def tipificar(
                 numero_cuotas=1,
                 descuento_porcentaje=Decimal("0"),
                 estado="vigente",
-                origen="agente",
+                origen=origen,
                 creado_en=ahora,
             )
             db.add(promesa)
@@ -246,7 +281,7 @@ def tipificar(
                 producto=producto,
                 valor=valor_venta,
                 unidades=1,
-                origen="agente",
+                origen=origen,
                 creado_en=ahora,
             )
             db.add(venta)
@@ -261,14 +296,14 @@ def tipificar(
                     numero_e164=telefono.numero_e164,
                     motivo="numero_errado",
                     aplica_a="todas",
-                    creado_por=usuario.id,
+                    creado_por=agente_id,
                 )
                 db.add(exclusion)
                 db.flush()
                 auditoria.registrar(
                     db,
                     "exclusion.crear",
-                    usuario.id,
+                    actor_id,
                     "exclusion",
                     exclusion.id,
                     {"motivo": "numero_errado", "aplica_a": "todas"},
@@ -277,12 +312,20 @@ def tipificar(
         # otro agente lo tiene (caso excepcional), se registran la tipificación, el intento, la
         # exclusión y los contadores (intentos, último resultado), pero NO se toca su reserva,
         # el estado del registro ni `proximo_intento_en`.
-        es_dueno = cc.reservado_por in (usuario.id, None)
+        es_dueno = cc.reservado_por in (agente_id, None)
+        # Contador con UPDATE atómico (`intentos = intentos + 1`): no pisa incrementos concurrentes.
+        db.flush()
+        db.execute(
+            update(CampanaCliente)
+            .where(CampanaCliente.id == cc.id)
+            .values(intentos=CampanaCliente.intentos + 1)
+            .execution_options(synchronize_session=False)
+        )
+        db.refresh(cc)
         if es_dueno:
             consola.liberar_registro(cc)
             cc.estado = efecto.estado
             cc.proximo_intento_en = efecto.proximo_intento_en
-        cc.intentos = efecto.intentos
         cc.ultimo_resultado = r
         cc.ultima_gestion_en = ahora
         if llamada.intento_contacto_id is not None:
@@ -290,11 +333,17 @@ def tipificar(
             if intento is not None:
                 intento.contacto_directo = efecto.contacto_directo
                 intento.resultado = r
-        estado_agente.fijar(db, usuario.id, "disponible", ahora)
+        actual = estado_agente.obtener(db, agente_id)
+        if origen == "agente" or (
+            actual is not None
+            and actual.estado in ("tipificando", "en_llamada")
+            and actual.llamada_id == llamada.id
+        ):
+            estado_agente.fijar(db, agente_id, "disponible", ahora)
         auditoria.registrar(
             db,
-            "tipificacion.crear",
-            usuario.id,
+            "tipificacion.crear" if origen == "agente" else "consola.tipificacion_sistema",
+            actor_id,
             "tipificacion",
             tip.id,
             {"tipificacion_id": tip.id, "llamada_id": llamada.id, "resultado": r},

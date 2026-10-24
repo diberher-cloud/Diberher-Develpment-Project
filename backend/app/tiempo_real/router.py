@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.db import get_db
-from app.dependencias import usuario_actual
+from app.errores import ErrorApp
 from app.modulos.usuarios.modelos import Usuario
 from app.reloj import Reloj, get_reloj
 from app.seguridad import decodificar_token_con_exp
@@ -35,17 +35,31 @@ class TicketSalida(BaseModel):
     expira_en: int
 
 
+def _sesion(
+    credenciales: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> tuple[Usuario, float]:
+    """Autentica el Bearer (una sola decodificación) y devuelve (usuario, `exp` del JWT)."""
+    no_autenticado = ErrorApp(401, "NO_AUTENTICADO", "No autenticado.")
+    if credenciales is None:
+        raise no_autenticado
+    decodificado = decodificar_token_con_exp(credenciales.credentials)
+    if decodificado is None:
+        raise no_autenticado
+    usuario = db.get(Usuario, decodificado[0])
+    if usuario is None or not usuario.activo:
+        raise no_autenticado
+    return usuario, decodificado[1]
+
+
 @router.post("/ws/ticket", response_model=TicketSalida)
 def emitir_ticket(
-    usuario: Annotated[Usuario, Depends(usuario_actual)],
-    credenciales: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    sesion: Annotated[tuple[Usuario, float], Depends(_sesion)],
     db: Annotated[Session, Depends(get_db)],
     reloj: Annotated[Reloj, Depends(get_reloj)],
 ) -> TicketSalida:
-    decodificado = decodificar_token_con_exp(credenciales.credentials) if credenciales else None
-    fin_sesion = (
-        datetime.fromtimestamp(decodificado[1], tz=reloj().tzinfo) if decodificado else None
-    )
+    usuario, exp = sesion
+    fin_sesion = datetime.fromtimestamp(exp, tz=reloj().tzinfo)
     ticket = tickets.emitir(db, usuario.id, reloj(), fin_sesion)
     return TicketSalida(ticket=ticket, expira_en=tickets.TTL_SEGUNDOS)
 

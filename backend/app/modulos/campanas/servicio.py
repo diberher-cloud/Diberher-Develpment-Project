@@ -239,7 +239,9 @@ def asignar_agentes(
 
     actuales = {
         a.usuario_id: a
-        for a in db.scalars(select(CampanaAgente).where(CampanaAgente.campana_id == campana_id))
+        for a in db.scalars(
+            select(CampanaAgente).where(CampanaAgente.campana_id == campana_id).with_for_update()
+        )
     }
     agregados = sorted(set(ids) - set(actuales))
     quitados = sorted(set(actuales) - set(ids))

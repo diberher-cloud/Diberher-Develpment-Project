@@ -2,11 +2,11 @@
 
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.catalogos import ESTADOS_LLAMADA_TIPIFICABLES
+from app.catalogos import ESTADOS_LLAMADA_ACTIVAS, ESTADOS_LLAMADA_TIPIFICABLES
 from app.errores import ErrorApp
 from app.modulos.consola.esquemas import CambioEstado, EstadoAgenteSalida, TipificacionPendiente
 from app.modulos.consola.estados import ErrorTransicion, resolver_transicion
@@ -140,3 +140,31 @@ def desconectar_por_inactividad(db: Session, usuario_id: int, ahora: datetime) -
     fijar(db, usuario_id, "desconectado", ahora)
     db.commit()
     return True
+
+
+def bloquear(db: Session, usuario_id: int) -> None:
+    """`FOR UPDATE` sobre la fila de estado del agente (si existe), con datos frescos.
+    Primer eslabón del orden de bloqueo estados_agente -> clientes."""
+    db.scalars(
+        select(EstadoAgente)
+        .where(EstadoAgente.usuario_id == usuario_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+
+
+def gestion_pendiente(db: Session, usuario_id: int) -> Llamada | None:
+    """Llamada del agente activa o terminada (realizada) sin tipificar."""
+    return db.scalar(
+        select(Llamada)
+        .outerjoin(Tipificacion, Tipificacion.llamada_id == Llamada.id)
+        .where(
+            Llamada.usuario_id == usuario_id,
+            or_(
+                Llamada.estado.in_(ESTADOS_LLAMADA_ACTIVAS),
+                and_(Llamada.estado.in_(ESTADOS_LLAMADA_TIPIFICABLES), Tipificacion.id.is_(None)),
+            ),
+        )
+        .order_by(Llamada.id.desc())
+        .limit(1)
+    )
