@@ -118,10 +118,6 @@ validar en el repositorio, sin Twilio real, aparece aquí con su alcance.
 - **Aviso de grabación ligado a `TELEFONIA_GRABAR`.** Con `TELEFONIA_GRABAR=false` no hay aviso. Decidir con el área
   jurídica si el aviso debe existir con independencia de la grabación. Ver
   [`cumplimiento-frecuencia.md`](cumplimiento-frecuencia.md), sección 9.
-- **Verificar `liberar-gestion` contra su comportamiento final.** La guía
-  ([`consola-agente.md`](consola-agente.md), sección 10) describe el comportamiento acordado: umbral de 3600 s,
-  restricción a `no_contesta` o `numero_errado` en llamadas atascadas, transacción única. Revisar `backend/app/cli.py`
-  tras el ajuste.
 - **Documentación de arquitectura desactualizada.** ADR-0003 dice `incoming_allow=true` y la implementación usa
   `False` en 2A. ADR-0017 menciona `GET /api/v1/ws?token=` y la revisión B3 lo sustituyó por tickets
   (`POST /api/v1/ws/ticket`). Los documentos de `docs/` siguen el código. Corregir los ADR es tarea del arquitecto.
