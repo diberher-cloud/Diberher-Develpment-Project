@@ -126,7 +126,7 @@ describe('Agentes de campaña', () => {
 
 describe('Tipificaciones de campaña', () => {
   const tip = (o: Partial<Tipificacion> = {}): Tipificacion => ({
-    id: 41, campana_cliente_id: 15, llamada_id: 31, canal: 'voz', origen: 'agente', usuario_id: 5, resultado: 'promesa_pago',
+    id: 41, campana_cliente_id: 15, llamada_id: 31, conversacion_id: null, canal: 'voz', origen: 'agente', usuario_id: 5, resultado: 'promesa_pago',
     contacto_directo: true, observacion: 'Paga el viernes', venta: null, volver_a_llamar_en: null, creado_en: '2026-10-23T15:13:00Z',
     promesa: { id: 7, monto: '250000.50', fecha_pago: '2026-10-30', numero_cuotas: 1, descuento_porcentaje: '0.00', estado: 'vigente' },
     cliente_nombre: 'María Pérez', agente_nombre: 'Pedro Agente', ...o,

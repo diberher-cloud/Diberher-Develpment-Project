@@ -63,7 +63,7 @@ export function campanaEjemplo(sobrescribir: Partial<Campana> = {}): Campana {
   return {
     id: 5, nombre: 'Cobranza octubre', tipo: 'cobranza', descripcion: null, estado: 'borrador',
     fecha_inicio: null, fecha_fin: null, guion: null, max_intentos: 3, intervalo_reintento_minutos: 60,
-    total_clientes: 0, creado_por: 1, creado_en: '2026-10-23T15:00:00Z', actualizado_en: '2026-10-23T15:00:00Z',
+    total_clientes: 0, whatsapp_habilitado: false, plantilla_inicial_id: null, creado_por: 1, creado_en: '2026-10-23T15:00:00Z', actualizado_en: '2026-10-23T15:00:00Z',
     ...sobrescribir,
   };
 }

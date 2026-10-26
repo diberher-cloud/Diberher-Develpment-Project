@@ -100,3 +100,34 @@ export async function solicitar<T>(
   }
   return datos as T;
 }
+
+/**
+ * Descarga un binario protegido (p. ej. adjuntos de WhatsApp) con el Bearer de la sesión. El navegador no puede
+ * usar `<img src>` con JWT: el llamador crea un `blob:` URL con el resultado (y debe revocarlo).
+ */
+export async function solicitarBlob(ruta: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const sesion = leerSesion();
+  if (sesion) headers.Authorization = `Bearer ${sesion.token}`;
+  let respuesta: Response;
+  try {
+    respuesta = await fetch(`${BASE_API}${ruta}`, { method: 'GET', headers });
+  } catch {
+    throw new ErrorApi(0, 'RED', 'No se pudo conectar con el servidor. Verifique su conexión e intente de nuevo.');
+  }
+  if (!respuesta.ok) {
+    if (respuesta.status === 401) limpiarSesion();
+    let datos: unknown = null;
+    try {
+      datos = JSON.parse(await respuesta.text());
+    } catch {
+      datos = null;
+    }
+    if (esErrorRespuesta(datos)) {
+      const e = datos.error;
+      throw new ErrorApi(respuesta.status, e.codigo, e.mensaje, Array.isArray(e.detalles) ? e.detalles : []);
+    }
+    throw new ErrorApi(respuesta.status, 'ERROR_DESCONOCIDO', `Error inesperado del servidor (HTTP ${respuesta.status}).`);
+  }
+  return respuesta.blob();
+}

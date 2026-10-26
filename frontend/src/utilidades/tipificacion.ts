@@ -42,14 +42,23 @@ export interface ContextoTipificacion {
   saldoTotal: string | null;
   /** Estado técnico de la llamada, si se conoce. */
   estadoLlamada?: EstadoLlamada | null;
+  /**
+   * Solo en el cierre de una conversación (fase-2b.md §4.8): `true` si el cliente escribió alguna vez
+   * (`no_contesta` no es posible); `false` si nunca escribió (solo `no_contesta`). `undefined` = tipificación de llamada.
+   */
+  huboEntrantes?: boolean;
   ahora?: Date;
 }
 
-/** Resultados que el servidor aceptará para esta campaña y llamada (RESULTADO_NO_PERMITIDO / _INCOHERENTE). */
-export function resultadosPermitidos(ctx: Pick<ContextoTipificacion, 'tipoCampana' | 'estadoLlamada'>): ResultadoTipificacion[] {
+/** Resultados que el servidor aceptará para esta campaña y llamada/conversación (RESULTADO_NO_PERMITIDO / _INCOHERENTE). */
+export function resultadosPermitidos(
+  ctx: Pick<ContextoTipificacion, 'tipoCampana' | 'estadoLlamada' | 'huboEntrantes'>,
+): ResultadoTipificacion[] {
   return RESULTADOS.filter((r) => {
     if (r === 'promesa_pago' && ctx.tipoCampana !== 'cobranza') return false;
     if (r === 'venta' && ctx.tipoCampana !== 'venta') return false;
+    if (ctx.huboEntrantes === true && r === 'no_contesta') return false;
+    if (ctx.huboEntrantes === false && r !== 'no_contesta') return false;
     if (ctx.estadoLlamada && NO_CONTESTADAS.includes(ctx.estadoLlamada) && r !== 'no_contesta' && r !== 'numero_errado') return false;
     return true;
   });
@@ -109,9 +118,13 @@ export function validarTipificacion(v: ValoresTipificacion, ctx: ContextoTipific
 
 /** Cuerpo de `POST /consola/tipificaciones`: solo los campos que corresponden al resultado. */
 export function aCuerpoTipificacion(llamadaId: number, v: ValoresTipificacion): TipificacionCrear {
+  return { llamada_id: llamadaId, ...aCuerpoTipificacionConversacion(v) };
+}
+
+/** Tipificación sin `llamada_id` (cierre de conversación, `POST /conversaciones/{id}/cerrar`). */
+export function aCuerpoTipificacionConversacion(v: ValoresTipificacion): Omit<TipificacionCrear, 'llamada_id'> {
   if (!v.resultado) throw new Error('Resultado no seleccionado.');
-  const cuerpo: TipificacionCrear = {
-    llamada_id: llamadaId,
+  const cuerpo: Omit<TipificacionCrear, 'llamada_id'> = {
     resultado: v.resultado,
     observacion: v.observacion.trim() || null,
   };

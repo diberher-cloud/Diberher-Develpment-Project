@@ -16,10 +16,12 @@ export interface Campana {
   id: number; nombre: string; tipo: TipoCampana; descripcion: string | null; estado: EstadoCampana;
   fecha_inicio: string | null; fecha_fin: string | null; guion: string | null;
   max_intentos: number; intervalo_reintento_minutos: number; total_clientes: number;
+  whatsapp_habilitado: boolean; plantilla_inicial_id: number | null;
   creado_por: number; creado_en: string; actualizado_en: string;
 }
 export type CampanaCrear = Pick<Campana, 'nombre' | 'tipo'> & Partial<Pick<Campana,
-  'descripcion' | 'fecha_inicio' | 'fecha_fin' | 'guion' | 'max_intentos' | 'intervalo_reintento_minutos'>>;
+  'descripcion' | 'fecha_inicio' | 'fecha_fin' | 'guion' | 'max_intentos' | 'intervalo_reintento_minutos' |
+  'whatsapp_habilitado' | 'plantilla_inicial_id'>>;
 export type CampanaActualizar = Partial<Omit<CampanaCrear, 'tipo'> & { estado: EstadoCampana }>;
 
 export interface ErrorImportacion { fila: number; campo: string | null; codigo: string; mensaje: string; severidad: Severidad }
@@ -37,7 +39,14 @@ export interface CampanaCliente {
   fecha_vencimiento: string | null; producto: string | null; oferta: string | null;
   datos_adicionales: Record<string, string>; importacion_id: number | null; creado_en: string;
 }
-export interface Exclusion { id: number; numero_e164: string; motivo: MotivoExclusion; aplica_a: AplicaA; observacion: string | null; creado_por: number; creado_en: string }
+export type CanalExclusion = 'todos' | 'voz' | 'whatsapp';
+export type OrigenExclusion = 'usuario' | 'sistema' | 'agente_ia';
+export type Finalidad = 'venta' | 'cobranza' | 'todas';
+export interface Exclusion {
+  id: number; numero_e164: string; motivo: MotivoExclusion; aplica_a: AplicaA; observacion: string | null;
+  creado_por: number | null; creado_en: string;
+  canal: CanalExclusion; origen: OrigenExclusion; conversacion_id: number | null;
+}
 export interface ResultadoImportacionExclusiones { total_filas: number; creadas: number; duplicadas: number; invalidas: number; errores: ErrorImportacion[]; errores_truncados: boolean }
 
 export interface Franja { inicio: string; fin: string }
@@ -92,6 +101,7 @@ export interface RegistroTrabajo {
 export interface TelefonoFicha {
   id: number; numero_mascara: string; tipo_linea: 'movil' | 'fijo'; prioridad: number;
   excluido: boolean; llamable: boolean; motivos: Motivo<CodigoMotivoCumplimiento | 'EXCLUIDO'>[];
+  whatsapp: WhatsAppTelefono | null;
 }
 export interface PromesaPago {
   id: number; monto: string; fecha_pago: string; numero_cuotas: number; descuento_porcentaje: string;
@@ -132,7 +142,8 @@ export interface TipificacionCrear {
   volver_a_llamar_en?: string | null;
 }
 export interface Tipificacion {
-  id: number; campana_cliente_id: number; llamada_id: number | null; canal: Canal; origen: OrigenGestion;
+  id: number; campana_cliente_id: number; llamada_id: number | null; conversacion_id: number | null;
+  canal: Canal; origen: OrigenGestion;
   usuario_id: number | null; resultado: ResultadoTipificacion; contacto_directo: boolean; observacion: string | null;
   promesa: PromesaPago | null; venta: Venta | null; volver_a_llamar_en: string | null; creado_en: string;
   registro?: { estado: CampanaCliente['estado']; intentos: number; proximo_intento_en: string | null };
@@ -149,7 +160,110 @@ export type EventoTiempoReal =
   | { tipo: 'pong'; datos: Record<string, never>; emitido_en: string }
   | { tipo: 'agente.estado'; datos: { usuario_id: number; estado: EstadoAgenteValor; desde: string; motivo_pausa: MotivoPausa | null; llamada_id: number | null }; emitido_en: string }
   | { tipo: 'llamada.estado'; datos: { llamada_id: number; usuario_id: number; campana_id: number; campana_cliente_id: number; estado: EstadoLlamada; motivos: Motivo<CodigoMotivoBloqueo>[] }; emitido_en: string }
-  | { tipo: 'consola.registro'; datos: { campana_id: number; campana_cliente_id: number | null; accion: 'reservado' | 'liberado' | 'gestionado' | 'asignacion' }; emitido_en: string };
+  | { tipo: 'consola.registro'; datos: { campana_id: number; campana_cliente_id: number | null; accion: 'reservado' | 'liberado' | 'gestionado' | 'asignacion' }; emitido_en: string }
+  | { tipo: 'conversacion.mensaje'; datos: { conversacion_id: number; mensaje_id: number; campana_id: number | null;
+        usuario_asignado_id: number | null; direccion: DireccionMensaje; autor: AutorMensaje; estado: EstadoMensaje;
+        accion: 'nuevo' | 'estado' }; emitido_en: string }
+  | { tipo: 'conversacion.estado'; datos: { conversacion_id: number; campana_id: number | null; estado: EstadoConversacion;
+        atendida_por: AtendidaPor; usuario_asignado_id: number | null; usuario_anterior_id: number | null;
+        motivo_cierre: MotivoCierre | null }; emitido_en: string }
+  | { tipo: 'atencion.cola'; datos: { cola_id: number; conversacion_id: number; campana_id: number | null;
+        motivo: MotivoCola; accion: 'encolada' | 'asignada' | 'cerrada' }; emitido_en: string }
+  | { tipo: 'trabajo.fallido'; datos: { trabajo_id: number; tipo: string; codigo: string }; emitido_en: string };
 
 /** `POST /ws/ticket`: ticket de un solo uso; `expira_en` en segundos. */
 export interface TicketWs { ticket: string; expira_en: number }
+
+// ---------------------------------------------------------------------------------------------
+// Fase 2B (fase-2b.md §4.15)
+// ---------------------------------------------------------------------------------------------
+export type EstadoConversacion = 'abierta' | 'cerrada';
+export type AtendidaPor = 'sin_asignar' | 'humano' | 'ia';
+export type MotivoCierre = 'agente' | 'supervisor' | 'inactividad' | 'opt_out' | 'sistema';
+export type MotivoCola =
+  | 'entrante' | 'sin_campana' | 'liberada' | 'agente_desconectado' | 'supervisor' | 'solicitud_cliente' | 'queja'
+  | 'ia_no_resuelve' | 'identidad_bloqueada' | 'ia_rechazo' | 'ia_max_tokens' | 'ia_iteraciones'
+  | 'ia_stop_inesperado' | 'ia_monto_no_respaldado' | 'ia_error' | 'presupuesto_excedido' | 'ia_desactivada';
+export type DireccionMensaje = 'entrante' | 'saliente';
+export type AutorMensaje = 'cliente' | 'agente' | 'ia' | 'sistema';
+export type TipoMensaje = 'texto' | 'plantilla' | 'media' | 'boton' | 'no_soportado';
+export type EstadoMensaje =
+  'recibido' | 'pendiente' | 'retenido' | 'enviando' | 'enviado' | 'entregado' | 'leido' | 'fallido' | 'cancelado';
+export type CategoriaMedia = 'imagen' | 'audio' | 'documento' | 'no_soportado';
+export type CodigoMotivoPlantilla = CodigoMotivoCumplimiento | 'EXCLUIDO' | 'SIN_AUTORIZACION';
+
+export interface ConfiguracionWhatsApp {
+  proveedor: 'twilio' | 'falso'; simulacion: boolean; numero_empresa_mascara: string;
+  margen_ventana_segundos: number; max_caracteres_texto: number; max_conversaciones_agente: number; media_max_bytes: number;
+}
+export interface UsuarioRef { id: number; nombre: string }
+export interface CampanaRef { id: number; nombre: string; tipo: TipoCampana }
+export interface ConversacionResumen {
+  id: number; estado: EstadoConversacion; atendida_por: AtendidaPor; usuario_asignado: UsuarioRef | null;
+  numero_mascara: string; numero_e164: string | null; nombre_perfil: string | null;
+  campana: CampanaRef | null; cliente_nombre: string | null; iniciada_por: 'empresa' | 'cliente';
+  ventana_abierta: boolean; ventana_expira_en: string | null; ultimo_mensaje_en: string; mensajes_sin_leer: number;
+  motivo_cola: MotivoCola | null; abierta_en: string; cerrada_en: string | null; motivo_cierre: MotivoCierre | null;
+}
+export interface Conversacion extends ConversacionResumen {
+  campana_cliente_id: number | null; cliente_id: number | null; telefono_id: number | null; tipificada: boolean;
+  puede_responder: boolean;
+  motivos_no_responder: Motivo<'NO_ES_DUENO' | 'CONVERSACION_CERRADA' | 'VENTANA_CERRADA' | 'CLIENTE_OPT_OUT'>[];
+  alertas: Motivo<'EXCLUIDO_WHATSAPP' | 'SIN_AUTORIZACION' | 'SIN_CAMPANA' | 'VARIOS_REGISTROS'>[];
+}
+export interface MediaMensaje { indice: number; categoria: CategoriaMedia; tipo_contenido: string; disponible: boolean }
+export interface Mensaje {
+  id: number; conversacion_id: number; direccion: DireccionMensaje; autor: AutorMensaje; usuario: UsuarioRef | null;
+  tipo: TipoMensaje; cuerpo: string | null; plantilla: { id: number; nombre: string } | null; media: MediaMensaje[];
+  boton: { payload: string; texto: string | null } | null; estado: EstadoMensaje;
+  error: { codigo: string; mensaje: string } | null; programado_para: string | null;
+  creado_en: string; enviado_en: string | null; entregado_en: string | null; leido_en: string | null;
+}
+export interface PaginaMensajes { items: Mensaje[]; hay_mas: boolean }
+export interface MensajeTextoCrear { texto: string; idempotencia_clave: string }
+export interface PlantillaEnvioCrear { plantilla_id: number; idempotencia_clave: string }
+export interface PlantillaConsolaCrear extends PlantillaEnvioCrear { telefono_id: number }
+export interface ResultadoEnvioPlantilla {
+  permitido: boolean; motivos: Motivo<CodigoMotivoPlantilla>[]; proxima_ventana_inicio: string | null;
+  politica_version: number; conversacion_id: number | null; mensaje: Mensaje | null;
+}
+export interface ItemCola {
+  id: number; conversacion_id: number; campana: { id: number; nombre: string } | null; motivo: MotivoCola;
+  prioridad: 1 | 2 | 3; resumen: string | null; numero_mascara: string; creado_en: string; espera_segundos: number;
+}
+export interface RegistroCandidato { campana_cliente_id: number; campana: CampanaRef; cliente_nombre: string; estado: CampanaCliente['estado'] }
+export interface CierreConversacionCrear { tipificacion: Omit<TipificacionCrear, 'llamada_id'> | null }
+export interface CierreConversacion { conversacion: Conversacion; tipificacion: Tipificacion | null }
+export type CampoPlantilla = 'primer_nombre' | 'empresa' | 'agente' | 'producto';
+export interface Plantilla {
+  id: number; content_sid: string; nombre: string; idioma: string;
+  categoria: 'marketing' | 'utility' | 'authentication' | 'desconocida';
+  estado_aprobacion: 'aprobada' | 'pendiente' | 'rechazada' | 'pausada' | 'deshabilitada' | 'eliminada' | 'desconocido';
+  motivo_rechazo: string | null; cuerpo: string; variables: string[];
+  botones: { tipo: 'respuesta_rapida' | 'url' | 'telefono' | 'otro'; texto: string; payload: string | null }[];
+  tiene_boton_baja: boolean; mapeo_variables: Record<string, CampoPlantilla>; finalidad: Finalidad | null;
+  activa: boolean; enviable: boolean; sincronizada_en: string;
+}
+export interface PlantillaActualizar { finalidad?: Finalidad; mapeo_variables?: Record<string, CampoPlantilla>; activa?: boolean }
+export interface ResultadoSincronizacion { creadas: number; actualizadas: number; desactivadas: number }
+export interface Autorizacion {
+  id: number; numero_mascara: string; numero_e164: string | null; canal: 'whatsapp'; finalidad: Finalidad;
+  origen: 'importacion' | 'cliente' | 'agente' | 'agente_ia'; evidencia: string; otorgada_en: string;
+  vigente: boolean; revocada_en: string | null; motivo_revocacion: 'opt_out' | 'manual' | 'importacion' | null;
+  registrada_por: UsuarioRef | null;
+}
+export interface AutorizacionCrear { telefono: string; finalidad: Finalidad; evidencia: string; otorgada_en?: string }
+export interface AutorizacionConversacionCrear { finalidad: Finalidad; evidencia: string }
+export interface WhatsAppTelefono {
+  autorizado: boolean; excluido: boolean; enviable: boolean; motivos: Motivo<CodigoMotivoPlantilla>[];
+  conversacion_abierta: { id: number; atendida_por: AtendidaPor; ventana_abierta: boolean } | null;
+}
+export interface EstadoTrabajos {
+  trabajadores: { trabajador: string; ultimo_latido: string; activo: boolean }[];
+  por_estado: { tipo: string; estado: 'pendiente' | 'en_proceso' | 'completado' | 'fallido' | 'cancelado'; total: number }[];
+  fallidos_recientes: { id: number; tipo: string; ultimo_error: string | null; intentos: number; actualizado_en: string }[];
+}
+export interface SimulacionEntrante {
+  numero: string; texto?: string | null; nombre_perfil?: string | null;
+  media?: { tipo_contenido: string }[]; boton_payload?: string | null; boton_texto?: string | null;
+}

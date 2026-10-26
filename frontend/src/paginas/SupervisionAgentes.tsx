@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listarAgentesSupervision } from '../api/endpoints';
 import type { AgenteSupervision, EstadoAgenteValor, EstadoLlamada } from '../api/tipos';
 import { Cargando } from '../componentes/Cargando';
+import { TarjetaWorker } from '../componentes/TarjetaWorker';
 import { MensajeError } from '../componentes/MensajeError';
 import { useConexionTiempoReal, useEventoTiempoReal } from '../tiempo_real/TiempoRealContext';
 import {
@@ -116,6 +117,7 @@ export function SupervisionAgentes() {
           </div>
         </>
       )}
+      <TarjetaWorker />
     </section>
   );
 }

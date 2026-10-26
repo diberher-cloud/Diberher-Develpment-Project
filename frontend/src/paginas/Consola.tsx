@@ -301,7 +301,7 @@ export function Consola() {
               onLlamar={llamar}
             />
           )}
-          <FichaCliente ficha={ficha} />
+          <FichaCliente ficha={ficha} permitirPlantilla={!enLlamada && !tipificando} />
           <Guion guion={ficha.guion} />
           <HistorialGestiones historial={ficha.historial} />
         </>

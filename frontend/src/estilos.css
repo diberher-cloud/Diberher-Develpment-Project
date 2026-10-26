@@ -70,3 +70,31 @@ tbody th { font-weight: 600; }
 .estado-softphone { font-weight: 600; }
 fieldset { border: 1px solid var(--borde); border-radius: 6px; margin: 0 0 .75rem; }
 textarea { font: inherit; width: 100%; box-sizing: border-box; }
+
+/* Fase 2B: bandeja de WhatsApp */
+.bandeja { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 1rem; align-items: start; }
+@media (max-width: 800px) { .bandeja { grid-template-columns: minmax(0, 1fr); } }
+.bandeja-lateral h2 { margin-top: 0; }
+.item-cola { border-bottom: 1px solid var(--borde); padding: .5rem 0; }
+.item-cola p { margin: .15rem 0; }
+.lista-conversaciones li { margin-bottom: .35rem; }
+.item-conversacion { display: flex; flex-direction: column; gap: .15rem; width: 100%; text-align: left; }
+.item-conversacion[aria-current="true"] { border-color: var(--azul); box-shadow: inset 4px 0 0 var(--azul); }
+.item-titulo { display: flex; justify-content: space-between; gap: .5rem; }
+.vista-conversacion header h2 { margin: 0; overflow-wrap: anywhere; }
+.mensajes { border: 1px solid var(--borde); border-radius: 8px; padding: .5rem; margin: .75rem 0; height: min(60vh, 520px); overflow-y: auto; background: #f9fafb; }
+.cargar-anteriores { display: block; margin: 0 auto .5rem; }
+.burbuja { max-width: 80%; margin: .4rem 0; padding: .5rem .75rem; border-radius: 10px; border: 1px solid var(--borde); background: #fff; overflow-wrap: anywhere; }
+.burbuja p { margin: .15rem 0; }
+.burbuja-entrante { margin-right: auto; }
+.burbuja-saliente { margin-left: auto; background: #dbeafe; border-color: #93c5fd; }
+.burbuja-sistema { background: #f3f4f6; border-style: dashed; }
+.burbuja-ia { background: #ede9fe; border-color: #c4b5fd; }
+.burbuja-texto { white-space: pre-wrap; }
+.burbuja-autor, .burbuja-pie { font-size: .85rem; color: #374151; }
+.estado-fallido { color: var(--rojo); font-weight: 600; }
+.adjunto { margin: .25rem 0; }
+.adjunto-imagen { max-width: 220px; max-height: 220px; border-radius: 6px; display: block; }
+.compositor textarea { width: 100%; }
+.previa-plantilla { margin: .5rem 0; padding: .5rem .75rem; background: var(--gris); border-left: 4px solid var(--azul); white-space: pre-wrap; }
+.acciones-conversacion .acciones { margin: .5rem 0; }

@@ -1,21 +1,24 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { actualizarCampana, crearCampana, obtenerCampana } from '../api/endpoints';
+import { actualizarCampana, crearCampana, listarPlantillas, obtenerCampana } from '../api/endpoints';
 import type { ErrorApi } from '../api/cliente';
-import type { Campana, TipoCampana } from '../api/tipos';
+import type { Campana, Plantilla, TipoCampana } from '../api/tipos';
 import { Campo } from '../componentes/Campo';
 import { Cargando } from '../componentes/Cargando';
 import { MensajeError } from '../componentes/MensajeError';
 import { aCuerpoCampana, CAMPANA_VACIA, validarCampana, type ValoresCampana } from '../utilidades/campanas';
 import { comoErrorApi } from '../utilidades/useCarga';
 
-const CAMPOS = ['nombre', 'tipo', 'descripcion', 'fecha_inicio', 'fecha_fin', 'guion', 'max_intentos', 'intervalo_reintento_minutos'];
+const CAMPOS = ['nombre', 'tipo', 'descripcion', 'fecha_inicio', 'fecha_fin', 'guion', 'max_intentos', 'intervalo_reintento_minutos',
+  'whatsapp_habilitado', 'plantilla_inicial_id'];
 
 function desdeCampana(c: Campana): ValoresCampana {
   return {
     nombre: c.nombre, tipo: c.tipo, descripcion: c.descripcion ?? '', fecha_inicio: c.fecha_inicio ?? '',
     fecha_fin: c.fecha_fin ?? '', guion: c.guion ?? '', max_intentos: String(c.max_intentos),
     intervalo_reintento_minutos: String(c.intervalo_reintento_minutos),
+    whatsapp_habilitado: c.whatsapp_habilitado ?? false,
+    plantilla_inicial_id: c.plantilla_inicial_id ? String(c.plantilla_inicial_id) : '',
   };
 }
 
@@ -39,6 +42,22 @@ export function CampanaFormulario() {
     );
     return () => { activo = false; };
   }, [editando, id]);
+
+  // Plantillas enviables para la plantilla inicial: solo se piden cuando WhatsApp está habilitado.
+  const [plantillas, setPlantillas] = useState<Plantilla[]>([]);
+  const habilitado = valores.whatsapp_habilitado;
+  useEffect(() => {
+    if (!habilitado) return;
+    let activo = true;
+    listarPlantillas({ enviables: true }).then(
+      (l) => { if (activo && Array.isArray(l)) setPlantillas(l); },
+      () => { if (activo) setPlantillas([]); },
+    );
+    return () => { activo = false; };
+  }, [habilitado]);
+  const plantillasCompatibles = plantillas.filter(
+    (p) => p.enviable && (!valores.tipo || p.finalidad === 'todas' || p.finalidad === valores.tipo),
+  );
 
   function cambiar<K extends keyof ValoresCampana>(k: K, v: ValoresCampana[K]) {
     setValores((prev) => ({ ...prev, [k]: v }));
@@ -106,6 +125,35 @@ export function CampanaFormulario() {
         <Campo etiqueta="Guion" error={msg('guion')} ayuda="Admite variables como {{nombre}}. Máximo 20000 caracteres.">
           {(p) => <textarea {...p} rows={8} value={valores.guion} onChange={(e) => cambiar('guion', e.target.value)} />}
         </Campo>
+        <fieldset>
+          <legend>WhatsApp</legend>
+          <div className="campo">
+            <label>
+              <input
+                type="checkbox"
+                checked={valores.whatsapp_habilitado}
+                onChange={(e) => cambiar('whatsapp_habilitado', e.target.checked)}
+              />{' '}
+              Habilitar WhatsApp en esta campaña
+            </label>
+            <small className="ayuda">Permite enviar plantillas desde la ficha y atender conversaciones de esta campaña en la bandeja.</small>
+          </div>
+          {valores.whatsapp_habilitado && (
+            <Campo etiqueta="Plantilla inicial (opcional)" error={msg('plantilla_inicial_id')} ayuda="Sugerida en la ficha del cliente. Solo plantillas activas y compatibles con el tipo de campaña.">
+              {(p) => (
+                <select {...p} value={valores.plantilla_inicial_id} onChange={(e) => cambiar('plantilla_inicial_id', e.target.value)}>
+                  <option value="">Ninguna</option>
+                  {plantillasCompatibles.map((x) => (
+                    <option key={x.id} value={x.id}>{x.nombre}</option>
+                  ))}
+                  {valores.plantilla_inicial_id && !plantillasCompatibles.some((x) => String(x.id) === valores.plantilla_inicial_id) && (
+                    <option value={valores.plantilla_inicial_id}>Plantilla #{valores.plantilla_inicial_id} (actual)</option>
+                  )}
+                </select>
+              )}
+            </Campo>
+          )}
+        </fieldset>
         <MensajeError error={errorApi} camposMostrados={CAMPOS} />
         <div className="acciones">
           <button type="submit" className="primario" disabled={enviando}>

@@ -57,6 +57,11 @@ export function useConexionTiempoReal(): { estado: EstadoConexion; reconexiones:
   return { estado: ctx?.estado ?? 'cerrada', reconexiones: ctx?.reconexiones ?? 0 };
 }
 
+/** `true` si hay un <TiempoRealProvider> montado (la aplicación real; las páginas sueltas en tests no lo tienen). */
+export function useTiempoRealMontado(): boolean {
+  return useContext(TiempoRealContext) !== null;
+}
+
 /** Ejecuta `manejador` por cada evento de los tipos indicados. Sin proveedor no hace nada. */
 export function useEventoTiempoReal(tipos: TipoEvento | TipoEvento[], manejador: (evento: EventoTiempoReal) => void): void {
   const ctx = useContext(TiempoRealContext);

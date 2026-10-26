@@ -11,6 +11,10 @@ import { Cumplimiento } from './paginas/Cumplimiento';
 import { Usuarios } from './paginas/Usuarios';
 import { Consola } from './paginas/Consola';
 import { SupervisionAgentes } from './paginas/SupervisionAgentes';
+import { Bandeja } from './paginas/Bandeja';
+import { PlantillasWhatsApp } from './paginas/PlantillasWhatsApp';
+import { Autorizaciones } from './paginas/Autorizaciones';
+import { SimuladorWhatsApp } from './paginas/SimuladorWhatsApp';
 
 const GESTION = ['administrador', 'supervisor'] as const;
 
@@ -75,6 +79,24 @@ export function App() {
             </RutaProtegida>
           }
         />
+        <Route path="/bandeja" element={<Bandeja />} />
+        <Route
+          path="/whatsapp/plantillas"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <PlantillasWhatsApp />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/autorizaciones"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <Autorizaciones />
+            </RutaProtegida>
+          }
+        />
+        <Route path="/whatsapp/simulador" element={<SimuladorWhatsApp />} />
         <Route path="/cumplimiento" element={<Cumplimiento />} />
         <Route
           path="/usuarios"

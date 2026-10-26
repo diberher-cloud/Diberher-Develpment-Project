@@ -6,7 +6,7 @@ import { errorApi, iniciarSesionComo, renderizarApp, respuesta, simularFetch } f
 
 const excl = (o: Partial<Exclusion> = {}): Exclusion => ({
   id: 3, numero_e164: '+573001234567', motivo: 'rne', aplica_a: 'venta', observacion: 'Carga RNE', creado_por: 2,
-  creado_en: '2026-10-23T15:20:00Z', ...o,
+  creado_en: '2026-10-23T15:20:00Z', canal: 'todos', origen: 'usuario', conversacion_id: null, ...o,
 });
 const pag = (items: Exclusion[]) => ({ items, total: items.length, page: 1, page_size: 20 });
 

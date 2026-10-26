@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { crearTipificacion } from '../../api/endpoints';
 import type { ErrorApi } from '../../api/cliente';
-import type { EstadoLlamada, ResultadoTipificacion, Tipificacion, TipoCampana } from '../../api/tipos';
+import type { EstadoLlamada, ResultadoTipificacion, Tipificacion, TipificacionCrear, TipoCampana } from '../../api/tipos';
 import {
-  aCuerpoTipificacion, ETIQUETA_RESULTADO, resultadosPermitidos, TIPIFICACION_VACIA, validarTipificacion,
+  aCuerpoTipificacion, aCuerpoTipificacionConversacion, ETIQUETA_RESULTADO, resultadosPermitidos, TIPIFICACION_VACIA, validarTipificacion,
   type ValoresTipificacion,
 } from '../../utilidades/tipificacion';
 import { formatearCOP } from '../../utilidades/formato';
@@ -11,34 +11,51 @@ import { comoErrorApi } from '../../utilidades/useCarga';
 import { Campo } from '../Campo';
 import { MensajeError } from '../MensajeError';
 
-interface Props {
-  llamadaId: number;
+interface PropsComunes {
   tipoCampana: TipoCampana;
   saldoTotal: string | null;
+}
+interface PropsLlamada extends PropsComunes {
+  contexto?: 'llamada';
+  llamadaId: number;
   estadoLlamada: EstadoLlamada | null;
   onCreada: (t: Tipificacion) => void;
 }
+interface PropsConversacion extends PropsComunes {
+  contexto: 'conversacion';
+  /** El cliente escribió alguna vez: define si `no_contesta` es posible (igual que el servidor). */
+  huboEntrantes: boolean;
+  /** Cierra la conversación con esta tipificación; un error lanzado se muestra en el formulario. */
+  onEnviar: (cuerpo: Omit<TipificacionCrear, 'llamada_id'>) => Promise<void>;
+}
+type Props = PropsLlamada | PropsConversacion;
 
 const CAMPOS = ['resultado', 'observacion', 'monto', 'fecha_pago', 'producto', 'valor', 'contacto_directo', 'volver_a_llamar_en'];
 
-export function FormularioTipificacion({ llamadaId, tipoCampana, saldoTotal, estadoLlamada, onCreada }: Props) {
+/** Tipificación de una llamada (consola 2A) o del cierre de una conversación de WhatsApp (bandeja 2B). */
+export function FormularioTipificacion(props: Props) {
+  const { tipoCampana, saldoTotal } = props;
+  const conversacion = props.contexto === 'conversacion';
+  const estadoLlamada = props.contexto === 'conversacion' ? null : props.estadoLlamada;
+  const huboEntrantes = props.contexto === 'conversacion' ? props.huboEntrantes : undefined;
   const [v, setV] = useState<ValoresTipificacion>(TIPIFICACION_VACIA);
   const [errLocal, setErrLocal] = useState<Record<string, string>>({});
   const [error, setError] = useState<ErrorApi | null>(null);
   const [enviando, setEnviando] = useState(false);
-  const permitidos = resultadosPermitidos({ tipoCampana, estadoLlamada });
+  const permitidos = resultadosPermitidos({ tipoCampana, estadoLlamada, huboEntrantes });
   const set = <K extends keyof ValoresTipificacion>(k: K, valor: ValoresTipificacion[K]) => setV((x) => ({ ...x, [k]: valor }));
   const msg = (c: string) => errLocal[c] ?? error?.detalleDe(c);
 
   async function enviar(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const l = validarTipificacion(v, { tipoCampana, saldoTotal, estadoLlamada });
+    const l = validarTipificacion(v, { tipoCampana, saldoTotal, estadoLlamada, huboEntrantes });
     setErrLocal(l);
     if (Object.keys(l).length) return;
     setEnviando(true);
     try {
-      onCreada(await crearTipificacion(aCuerpoTipificacion(llamadaId, v)));
+      if (props.contexto === 'conversacion') await props.onEnviar(aCuerpoTipificacionConversacion(v));
+      else props.onCreada(await crearTipificacion(aCuerpoTipificacion(props.llamadaId, v)));
     } catch (err) {
       setError(comoErrorApi(err));
     } finally {
@@ -49,10 +66,18 @@ export function FormularioTipificacion({ llamadaId, tipoCampana, saldoTotal, est
   const r: ResultadoTipificacion | '' = v.resultado;
   return (
     <section aria-labelledby="t-tipif" className="tarjeta">
-      <h2 id="t-tipif">Tipificar la llamada</h2>
-      <p className="alerta alerta-error" role="status">
-        Debe tipificar esta llamada antes de tomar otro registro o cambiar de estado.
-      </p>
+      <h2 id="t-tipif">{conversacion ? 'Cerrar y tipificar la conversación' : 'Tipificar la llamada'}</h2>
+      {conversacion ? (
+        <p className="ayuda">
+          {huboEntrantes
+            ? 'El cliente escribió en esta conversación: indique el resultado de la gestión.'
+            : 'El cliente no escribió en esta conversación: el único resultado posible es "No contesta".'}
+        </p>
+      ) : (
+        <p className="alerta alerta-error" role="status">
+          Debe tipificar esta llamada antes de tomar otro registro o cambiar de estado.
+        </p>
+      )}
       <form onSubmit={enviar} noValidate className="formulario" aria-label="Formulario de tipificación">
         <Campo etiqueta="Resultado" error={msg('resultado')}>
           {(p) => (
@@ -117,7 +142,7 @@ export function FormularioTipificacion({ llamadaId, tipoCampana, saldoTotal, est
         </Campo>
         <MensajeError error={error} camposMostrados={CAMPOS} />
         <button type="submit" className="primario" disabled={enviando}>
-          {enviando ? 'Registrando…' : 'Registrar tipificación'}
+          {enviando ? (conversacion ? 'Cerrando…' : 'Registrando…') : conversacion ? 'Cerrar conversación' : 'Registrar tipificación'}
         </button>
       </form>
     </section>

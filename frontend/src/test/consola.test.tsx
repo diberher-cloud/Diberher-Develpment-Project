@@ -22,9 +22,9 @@ const ficha = (o: Partial<FichaCliente> = {}): FichaCliente => ({
   reservado_hasta: '2026-10-23T15:25:00Z', intentos: 1, max_intentos: 3, ultimo_resultado: 'no_contesta', proximo_intento_en: null,
   cliente: { id: 9, tipo_documento: 'CC', numero_documento: '1020304050', nombre: 'María Pérez', email: null, ciudad: 'Bogotá' },
   telefonos: [
-    { id: 21, numero_mascara: '+57300****567', tipo_linea: 'movil', prioridad: 1, excluido: false, llamable: true, motivos: [] },
+    { id: 21, numero_mascara: '+57300****567', tipo_linea: 'movil', prioridad: 1, excluido: false, llamable: true, motivos: [], whatsapp: null },
     { id: 22, numero_mascara: '+57601****678', tipo_linea: 'fijo', prioridad: 2, excluido: true, llamable: false,
-      motivos: [{ codigo: 'EXCLUIDO', mensaje: 'Número excluido (numero_errado).' }] },
+      motivos: [{ codigo: 'EXCLUIDO', mensaje: 'Número excluido (numero_errado).' }], whatsapp: null },
   ],
   numero_obligacion: 'OB-001', saldo_total: '1500000.00', saldo_mora: '250000.50', dias_mora: 45, fecha_vencimiento: '2026-09-15',
   producto: null, oferta: null, datos_adicionales: { segmento: 'A' },

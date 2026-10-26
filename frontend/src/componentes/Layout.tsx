@@ -1,7 +1,17 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { useWhatsApp, WhatsAppProvider } from './ContextoWhatsApp';
 
 export function Layout() {
+  return (
+    <WhatsAppProvider>
+      <Estructura />
+    </WhatsAppProvider>
+  );
+}
+
+function Estructura() {
+  const { configuracion, noLeidos } = useWhatsApp();
   const { usuario, logout, tieneRol } = useAuth();
   const navegar = useNavigate();
 
@@ -20,8 +30,12 @@ export function Layout() {
         <nav aria-label="Principal" className="menu">
           <NavLink to="/campanas">Campañas</NavLink>
           {tieneRol('agente') && <NavLink to="/consola">Consola</NavLink>}
+          <NavLink to="/bandeja">{noLeidos > 0 ? `Bandeja (${noLeidos})` : 'Bandeja'}</NavLink>
           {tieneRol('administrador', 'supervisor') && <NavLink to="/supervision/agentes">Supervisión</NavLink>}
           {tieneRol('administrador', 'supervisor') && <NavLink to="/exclusiones">Exclusiones</NavLink>}
+          {tieneRol('administrador', 'supervisor') && <NavLink to="/whatsapp/plantillas">Plantillas</NavLink>}
+          {tieneRol('administrador', 'supervisor') && <NavLink to="/autorizaciones">Autorizaciones</NavLink>}
+          {configuracion?.simulacion === true && <NavLink to="/whatsapp/simulador">Simulador WhatsApp</NavLink>}
           <NavLink to="/cumplimiento">Cumplimiento</NavLink>
           {tieneRol('administrador') && <NavLink to="/usuarios">Usuarios</NavLink>}
         </nav>

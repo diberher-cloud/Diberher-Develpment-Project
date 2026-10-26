@@ -20,11 +20,12 @@ export const ETIQUETA_ACCION: Record<EstadoCampana, string> = {
 export interface ValoresCampana {
   nombre: string; tipo: TipoCampana | ''; descripcion: string; fecha_inicio: string; fecha_fin: string;
   guion: string; max_intentos: string; intervalo_reintento_minutos: string;
+  whatsapp_habilitado: boolean; plantilla_inicial_id: string;
 }
 
 export const CAMPANA_VACIA: ValoresCampana = {
   nombre: '', tipo: '', descripcion: '', fecha_inicio: '', fecha_fin: '', guion: '',
-  max_intentos: '3', intervalo_reintento_minutos: '60',
+  max_intentos: '3', intervalo_reintento_minutos: '60', whatsapp_habilitado: false, plantilla_inicial_id: '',
 };
 
 /** Validación en cliente equivalente a fase-1.md §4.5. */
@@ -55,5 +56,7 @@ export function aCuerpoCampana(v: ValoresCampana): Omit<CampanaCrear, 'tipo'> & 
     guion: v.guion.trim() ? v.guion : null,
     max_intentos: Number(v.max_intentos),
     intervalo_reintento_minutos: Number(v.intervalo_reintento_minutos),
+    whatsapp_habilitado: v.whatsapp_habilitado,
+    plantilla_inicial_id: v.whatsapp_habilitado && v.plantilla_inicial_id ? Number(v.plantilla_inicial_id) : null,
   };
 }

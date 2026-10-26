@@ -2,12 +2,16 @@ import type { FichaCliente as Ficha } from '../../api/tipos';
 import { ETIQUETA_TIPO } from '../../utilidades/campanas';
 import { ETIQUETA_RESULTADO } from '../../utilidades/tipificacion';
 import { formatearCOP, formatearFecha, formatearFechaHora } from '../../utilidades/formato';
+import { WhatsAppTelefonoFicha } from './WhatsAppTelefonoFicha';
 
 /** Añade el punto final solo si el texto no termina ya en punto ("p. m."). */
 const conPunto = (t: string) => (t.endsWith('.') ? t : `${t}.`);
 
-/** Datos del cliente y de la obligación. Los teléfonos se muestran siempre enmascarados. */
-export function FichaCliente({ ficha: f }: { ficha: Ficha }) {
+/**
+ * Datos del cliente y de la obligación. Los teléfonos se muestran siempre enmascarados. `permitirPlantilla` habilita el
+ * envío de plantillas de WhatsApp (consola del agente con el registro reservado).
+ */
+export function FichaCliente({ ficha: f, permitirPlantilla = false }: { ficha: Ficha; permitirPlantilla?: boolean }) {
   const cobranza = f.campana.tipo === 'cobranza';
   const c = f.cumplimiento;
   return (
@@ -58,6 +62,7 @@ export function FichaCliente({ ficha: f }: { ficha: Ficha }) {
                 ))}
               </ul>
             )}
+            <WhatsAppTelefonoFicha ficha={f} telefono={t} permitirEnvio={permitirPlantilla} />
           </li>
         ))}
       </ul>

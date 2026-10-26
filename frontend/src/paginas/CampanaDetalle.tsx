@@ -93,6 +93,7 @@ export function CampanaDetalle() {
         <div><dt>Fin</dt><dd>{formatearFecha(campana.fecha_fin)}</dd></div>
         <div><dt>Máximo de intentos</dt><dd>{campana.max_intentos}</dd></div>
         <div><dt>Intervalo de reintento</dt><dd>{campana.intervalo_reintento_minutos} min</dd></div>
+        <div><dt>WhatsApp</dt><dd>{campana.whatsapp_habilitado ? 'Habilitado' : 'No habilitado'}</dd></div>
         <div><dt>Clientes</dt><dd>{campana.total_clientes}</dd></div>
         <div><dt>Creada</dt><dd>{formatearFechaHora(campana.creado_en)}</dd></div>
       </dl>
