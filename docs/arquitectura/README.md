@@ -79,6 +79,7 @@ Decisiones clave:
 | [0016](adr-0016-traspaso-humano-y-supervision.md) | Cola de traspaso a humano, intervención del supervisor, kill switch |
 | [0017](adr-0017-consola-agente-y-tipificaciones.md) | Consola del agente: asignación, reserva de registros, estados, tipificación obligatoria |
 | [0018](adr-0018-evaluacion-agente-ia.md) | Evaluación del agente IA offline (cliente falso) y online opcional |
+| [0019](adr-0019-whatsapp-bandeja-humana.md) | WhatsApp base y bandeja humana (subfase 2B) |
 
 ## 3. Módulos del backend
 

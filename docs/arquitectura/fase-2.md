@@ -2,8 +2,8 @@
 
 > Fuente de verdad para backend, frontend, QA y documentación durante la Fase 2.
 > Visión general: [`README.md`](README.md). Decisiones: ADR-0010 a ADR-0018 (y ADR-0003/0004 de fases
-> anteriores). La subfase **2A** está detallada a nivel de contrato (§1-§6); las subfases 2B-2F a nivel
-> medio (§7) y se detallarán en este mismo documento al empezar cada una. Riesgos y preguntas: §8.
+> anteriores). La subfase **2A** está detallada a nivel de contrato (§1-§6); la **2B** en
+> [`fase-2b.md`](fase-2b.md) (ADR-0019); 2C-2F a nivel medio (§7), que se detallarán al empezar cada una. Riesgos y preguntas: §8.
 
 ## 0. Subfases
 
@@ -15,6 +15,8 @@
 | **2D** Campañas outbound de WhatsApp | Envío masivo de plantillas con cumplimiento por destinatario y ritmo; métricas; respuestas atendidas por la IA. | `0005` |
 | **2E** Llamadas de voz por WhatsApp | Permiso de llamada, llamada saliente `<Dial><WhatsApp>` desde el softphone, entrantes a agentes humanos. | `0006` |
 | **2F** Operación y endurecimiento | Retención/anonimización, evaluación online programada, reportes de IA y costes, seguridad pendiente. | `0007` (si aplica) |
+
+> **2B detallada a nivel de contrato en [fase-2b.md](fase-2b.md)** (ADR-0019).
 
 Orden por dependencia y valor: 2A construye el dominio común (tipificaciones, promesas, ventas,
 `intentos_contacto`, frecuencia, asignación, tiempo real) que reutilizan la IA y WhatsApp; 2B el canal y
