@@ -1,7 +1,10 @@
 # ADR-0009: Marcador preview y progresivo con cola en PostgreSQL
 
-- Estado: aceptado (implementación en fase 3)
+- Estado: aceptado (implementación en fase 3, **solo para campañas atendidas por humanos**)
 - Fecha: 2026-10-23
+- Actualizado: 2026-10-28 — modificado por [ADR-0021](adr-0021-marcador-automatico-voz-ia.md): las
+  campañas de voz atendidas por IA tienen su propio marcador en la subfase 2D (sin agente humano por
+  llamada). Este ADR queda para campañas en `voz_modo=humano` y pasa a ser opcional (Fase 3).
 
 ## Contexto
 Se pide marcador automático con modos preview y progresivo, reintentos configurables y respeto de
@@ -17,7 +20,8 @@ y cuenta como contacto frente a la Ley 2300.
   abandono por diseño.
 - **Cola**: tabla `cola_marcacion` (campana_cliente_id, telefono_id, disponible_desde, prioridad,
   reservado_por, reservado_hasta). Toma con `SELECT … FOR UPDATE SKIP LOCKED LIMIT 1`; reserva con
-  caducidad para liberar registros si el worker cae.
+  caducidad para liberar registros si el worker cae. *(Desde ADR-0021 se reutilizan la creación REST
+  de llamadas, el AMD, la reserva `reserva_origen` y los reintentos por resultado del marcador IA.)*
 - **Elegibilidad** (todas en servidor, en el momento de marcar): campaña activa, registro pendiente,
   `intentos < max_intentos`, `proximo_intento_en <= ahora`, franja y festivo (ADR-0002), exclusiones,
   frecuencia del cliente entre campañas.

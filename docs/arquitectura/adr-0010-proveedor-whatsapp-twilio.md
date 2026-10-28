@@ -1,14 +1,18 @@
 # ADR-0010: Proveedor de WhatsApp — Twilio (mensajería y WhatsApp Business Calling)
 
-- Estado: aceptado (implementación en subfases 2B, 2D y 2E)
+- Estado: aceptado (implementación en subfases 2B, 2E y 2F)
 - Fecha: 2026-10-23
+- Actualizado: 2026-10-28 (revisión de alcance "IA en voz": las llamadas de WhatsApp las atiende el
+  agente IA si ConversationRelay funciona sobre ellas —a verificar al iniciar 2F—; si no, humanos con
+  el softphone como estaba previsto. Renumeración: envíos masivos 2D → 2E, llamadas 2E → 2F)
 
 ## Contexto
 La Fase 2 incorpora WhatsApp en tres usos:
 1. **Mensajería** inbound y outbound: plantillas aprobadas por Meta para iniciar conversaciones,
    conversación libre dentro de la ventana de atención de 24 h, opt-in/opt-out.
 2. **Llamadas de voz por WhatsApp** (WhatsApp Business Calling), salientes y entrantes, atendidas por
-   agentes humanos desde el mismo softphone del navegador que ya usa Twilio Voice (ADR-0003).
+   el **agente IA de voz** (ADR-0020) con traspaso a agentes humanos en el mismo softphone del
+   navegador que ya usa Twilio Voice (ADR-0003).
 3. Los chats los atiende un agente de IA (ADR-0014/0015); el proveedor solo transporta mensajes.
 
 Hay que elegir entre usar Twilio como proveedor (BSP) de WhatsApp o integrar directamente la
@@ -18,7 +22,7 @@ Hay que elegir entre usar Twilio como proveedor (BSP) de WhatsApp o integrar dir
 |---|---|---|
 | Mensajería y plantillas | Programmable Messaging + Content API (`ContentSid` `HX…`); estado de aprobación consultable y, desde jul-2026, notificado por Event Streams | Graph API (`/messages`, `/message_templates`) |
 | Webhooks | Form-urlencoded, firmados con `X-Twilio-Signature` (HMAC-SHA1 con el Auth Token), el **mismo mecanismo que ya validamos para voz** | JSON, firmados con `X-Hub-Signature-256` (HMAC-SHA256 con el App Secret) + verificación `hub.challenge` |
-| Llamadas WhatsApp | **GA desde el 15-jul-2025 en Programmable Voice**. Salientes con `<Dial><WhatsApp>` (TwiML) y caller ID `whatsapp:+57…`; entrantes llegan a la TwiML App del sender. Se puentea con `<Client>` al softphone del agente **sin infraestructura nueva** | La empresa debe operar su propio stack WebRTC: intercambio SDP (offer/answer), ICE/DTLS, STUN/TURN, pre-accept en 30-60 s, y puentear el audio con el navegador del agente |
+| Llamadas WhatsApp | **GA desde el 15-jul-2025 en Programmable Voice**. Salientes con `<Dial><WhatsApp>` (TwiML) y caller ID `whatsapp:+57…`; entrantes llegan a la TwiML App del sender. Se puentea con `<Client>` al softphone del agente **sin infraestructura nueva**. Compatibilidad con `<Connect><ConversationRelay>` **no documentada** (verificar en 2F) | La empresa debe operar su propio stack WebRTC: intercambio SDP (offer/answer), ICE/DTLS, STUN/TURN, pre-accept en 30-60 s, y puentear el audio con el navegador del agente o con la IA |
 | Disponibilidad de llamadas en Colombia | Salientes disponibles en todos los países de Cloud API excepto EE. UU., Canadá, Egipto, Nigeria, Turquía y Vietnam → **Colombia incluida**; entrantes en todos los países de Cloud API | Igual (la restricción es de Meta) |
 | Requisitos de llamadas salientes | Permiso explícito del usuario (plantilla/mensaje interactivo de solicitud de permiso de llamada, enviado dentro de una conversación); límite de mensajería de Meta ≥ 2 000 conversaciones iniciadas por la empresa/24 h (en la práctica, **verificación del negocio en Meta**) | Igual |
 | Precio | Tarifa de Meta sin margen **+ US$0,005 por mensaje** (entrante y saliente) de Twilio; llamadas por minuto según tarifa Twilio/Meta | Solo tarifa de Meta |
@@ -54,11 +58,14 @@ segundo tipo (cobranza y venta de la propia empresa, herramientas acotadas).
    Implementaciones: `ProveedorWhatsAppTwilio` (SDK `twilio`) y `ProveedorWhatsAppFalso` (memoria; tests
    y desarrollo sin credenciales). Selección por `WHATSAPP_PROVEEDOR=twilio|falso`. Los tipos
    (`MensajeEntrante`, `EstadoMensaje`, …) son **neutros**: no exponen nombres de campos de Twilio al
-   dominio, para que una futura `ProveedorWhatsAppMeta` sea un adaptador más.
-3. **Llamadas WhatsApp** (2E) se implementan en el módulo `telefonia` existente: el TwiML saliente
-   responde `<Dial callerId="whatsapp:+57…"><WhatsApp>whatsapp:+57…</WhatsApp></Dial>` cuando el
-   canal pedido es `whatsapp_llamada`; las entrantes llegan a un Voice URL propio. `ProveedorTelefonia`
-   no cambia de interfaz.
+   dominio, para que una futura `ProveedorWhatsAppMeta` sea un adaptador más. (Contrato detallado en
+   `fase-2b.md` §4.3.)
+3. **Llamadas WhatsApp** (2F) se implementan en el módulo `telefonia` existente. Preferente: atendidas
+   por la IA con el mismo servicio de sesiones de voz (ADR-0020) y lanzadas por el marcador IA
+   (ADR-0021) con permiso de llamada y opt-in vigentes. Alternativa si la verificación de 2F falla: el
+   TwiML saliente responde `<Dial callerId="whatsapp:+57…"><WhatsApp>whatsapp:+57…</WhatsApp></Dial>`
+   desde el softphone y las entrantes se puentean a un agente humano. `ProveedorTelefonia` no cambia de
+   interfaz.
 4. La **validación de firma** de Twilio se implementa una sola vez como función pura
    (`app/integraciones/twilio_firma.py`) y la usan voz y WhatsApp (ADR-0013).
 5. Se registra el sender de WhatsApp con un número colombiano (+57) bajo el portafolio de negocio
@@ -67,10 +74,10 @@ segundo tipo (cobranza y venta de la propia empresa, herramientas acotadas).
 ## Alternativas consideradas
 - **Meta Cloud API directo**: más barato (sin los US$0,005/mensaje) y acceso más temprano a novedades
   de Meta; descartado por ahora porque las llamadas exigirían operar un servidor de medios WebRTC y
-  puentearlo con el navegador del agente (componente nuevo, difícil de probar sin credenciales), y
-  porque duplica credenciales, firma y operación. Revisable por coste cuando el volumen lo justifique:
-  la interfaz `ProveedorWhatsApp` lo permite sin tocar el dominio (las llamadas sí exigirían un
-  adaptador de medios).
+  puentearlo con el navegador del agente o con la IA (componente nuevo, difícil de probar sin
+  credenciales), y porque duplica credenciales, firma y operación. Revisable por coste cuando el
+  volumen lo justifique: la interfaz `ProveedorWhatsApp` lo permite sin tocar el dominio (las llamadas
+  sí exigirían un adaptador de medios).
 - **Otro BSP (360dialog, Gupshup, Infobip…)**: precios competitivos, pero añade un segundo proveedor
   sin resolver las llamadas mejor que Twilio.
 - **Twilio Flex / Conversations**: acelera la bandeja de agentes, pero acopla producto y coste
@@ -81,8 +88,8 @@ segundo tipo (cobranza y venta de la propia empresa, herramientas acotadas).
 - + Todo es verificable con `ProveedorWhatsAppFalso` (sin credenciales).
 - − Coste adicional de US$0,005 por mensaje (entrante y saliente) frente a Meta directo.
 - − Dependemos de que Twilio exponga a tiempo las novedades de Meta (p. ej. nuevos tipos de mensaje de
-  permiso de llamada). Las funciones de Business Calling se verifican contra la documentación vigente
-  al empezar la subfase 2E.
+  permiso de llamada) y de que ConversationRelay admita llamadas de WhatsApp. Las funciones de Business
+  Calling se verifican contra la documentación vigente al empezar la subfase 2F.
 - − Requisitos externos: verificación del negocio en Meta, sender aprobado, plantillas aprobadas y
   límite de mensajería ≥ 2 000 para llamadas salientes (ver fase-2.md §8).
 

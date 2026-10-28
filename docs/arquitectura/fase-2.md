@@ -1,9 +1,9 @@
-# Fase 2 — Omnicanal: consola de voz, WhatsApp y agente IA
+# Fase 2 — Omnicanal: consola de voz, WhatsApp y agente IA (chat y voz)
 
 > Fuente de verdad para backend, frontend, QA y documentación durante la Fase 2.
-> Visión general: [`README.md`](README.md). Decisiones: ADR-0010 a ADR-0018 (y ADR-0003/0004 de fases
+> Visión general: [`README.md`](README.md). Decisiones: ADR-0010 a ADR-0021 (y ADR-0003/0004 de fases
 > anteriores). La subfase **2A** está detallada a nivel de contrato (§1-§6); la **2B** en
-> [`fase-2b.md`](fase-2b.md) (ADR-0019); 2C-2F a nivel medio (§7), que se detallarán al empezar cada una. Riesgos y preguntas: §8.
+> [`fase-2b.md`](fase-2b.md) (ADR-0019); 2C-2G a nivel medio (§7), que se detallarán al empezar cada una. Riesgos y preguntas: §8.
 
 ## 0. Subfases
 
@@ -11,21 +11,41 @@
 |---|---|---|
 | **2A** Consola del agente y voz | Un agente asignado toma un registro, llama (softphone Twilio o falso), el servidor aplica cumplimiento (franjas, festivos, exclusiones, **frecuencia**) antes del `<Dial>`, tipifica (promesa, venta, volver a llamar, número errado…), y el supervisor ve estados en vivo por WebSocket. Importación `.xlsx`. | `0002` |
 | **2B** WhatsApp base y bandeja humana | Mensajes entrantes por webhook firmado → conversación → bandeja de agentes humanos; respuesta libre en ventana de 24 h; plantilla individual; opt-in/opt-out; exclusiones por canal; worker y cola `trabajos`. | `0003` |
-| **2C** Agente IA en WhatsApp | La IA (cliente de Claude falso en tests) atiende conversaciones: verifica identidad, negocia dentro de límites, registra acuerdos/ventas, deriva a humano; supervisión en vivo, kill switch, costes, evaluación offline. | `0004` |
-| **2D** Campañas outbound de WhatsApp | Envío masivo de plantillas con cumplimiento por destinatario y ritmo; métricas; respuestas atendidas por la IA. | `0005` |
-| **2E** Llamadas de voz por WhatsApp | Permiso de llamada, llamada saliente `<Dial><WhatsApp>` desde el softphone, entrantes a agentes humanos. | `0006` |
-| **2F** Operación y endurecimiento | Retención/anonimización, evaluación online programada, reportes de IA y costes, seguridad pendiente. | `0007` (si aplica) |
+| **2C** Núcleo del agente IA + chat de WhatsApp | Núcleo canal-agnóstico (contexto fijado por el servidor, herramientas con límites, guardas, costes, auditoría; tablas de IA referidas a conversación **o** llamada). La IA (cliente de Claude falso en tests) atiende conversaciones de WhatsApp: verifica identidad, negocia dentro de límites, registra acuerdos/ventas, deriva a humano; supervisión en vivo, kill switch, costes, evaluación offline. | `0004` |
+| **2D** Agente IA de voz telefónica + marcador IA | Con cliente de Claude falso, ConversationRelay simulado y telefonía falsa: el marcador lanza llamadas según concurrencia, ritmo y cumplimiento; la IA saluda con el aviso legal, maneja contestadores (AMD), verifica identidad (DTMF), negocia y registra acuerdos con constancia, atiende opt-out por voz, transfiere a un agente humano disponible de la consola 2A (espera corta o devolución de llamada si no hay), y la llamada queda transcrita y tipificada automáticamente. Entrantes PSTN atendidas por la IA. Supervisión de llamadas IA y kill switch. | `0005` |
+| **2E** Campañas masivas de WhatsApp | Envío masivo de plantillas con cumplimiento por destinatario y ritmo; métricas; respuestas atendidas por la IA; plantilla de constancia de acuerdos de voz. | `0006` |
+| **2F** Llamadas de WhatsApp atendidas por IA | Verificación inicial (¿ConversationRelay sobre WhatsApp Calling?); permiso de llamada; salientes por el marcador IA y entrantes a la IA, con traspaso a humanos; alternativa con softphone humano si la verificación falla. | `0007` |
+| **2G** Operación y endurecimiento | Retención/anonimización (transcripciones y grabaciones), evaluación online programada (chat y voz), reportes de IA, costes por canal y latencia, seguridad pendiente, pruebas de carga. | `0008` (si aplica) |
 
 > **2B detallada a nivel de contrato en [fase-2b.md](fase-2b.md)** (ADR-0019).
 
+> **Revisión de alcance: IA en voz (2026-10-28).** El usuario indicó que "las llamadas se atienden por
+> un agente de IA". Hasta esta fecha el diseño ponía la IA solo en el chat de WhatsApp (antigua 2C) y
+> las llamadas (2A y antigua 2E) las atendían humanos. Desde ahora las llamadas de voz —salientes de
+> las campañas de venta y cobranza, entrantes PSTN y llamadas de WhatsApp— las atiende un agente de IA
+> con Claude, con la misma autonomía total que en chat (límites validados por el servidor) y traspaso
+> a un humano cuando el cliente lo pide o la IA lo decide. **Decisión confirmada por el usuario**: hay
+> agentes humanos de respaldo en la consola de 2A; sin humano disponible se aplica espera corta y
+> devolución de llamada. Consecuencias en el plan: (1) 2C pasa a construir un **núcleo de IA
+> canal-agnóstico** (sin cambiar su alcance funcional, que sigue siendo el chat); (2) nueva **2D**
+> (voz IA + marcador IA, ADR-0020 y ADR-0021); (3) los antiguos 2D/2E/2F pasan a **2E/2F/2G**, y la
+> antigua 2E (llamadas WhatsApp a humanos) pasa a ser **llamadas WhatsApp atendidas por IA** (2F); (4)
+> el marcador para campañas de IA se adelanta de la Fase 3 a 2D; la Fase 3 queda como marcador
+> opcional para campañas humanas. Lo construido en 2A (consola, softphone, tipificaciones,
+> frecuencia, reservas) se reutiliza como destino de traspasos y para supervisión. ADR actualizados:
+> 0003, 0009, 0010, 0014, 0015, 0016; nuevos: 0020, 0021. 2B (en implementación) no cambia.
+
 Orden por dependencia y valor: 2A construye el dominio común (tipificaciones, promesas, ventas,
 `intentos_contacto`, frecuencia, asignación, tiempo real) que reutilizan la IA y WhatsApp; 2B el canal y
-la red de seguridad humana; 2C el agente IA (valor principal) ya con traspaso humano disponible; 2D
-escala el outbound cuando la IA puede atender las respuestas; 2E añade voz por WhatsApp; 2F endurece.
+la red de seguridad humana; 2C el núcleo del agente IA (valor principal) sobre el canal más sencillo
+(texto asíncrono) y ya con traspaso humano disponible; 2D lleva ese núcleo a la voz, donde está el
+mayor volumen de las campañas, y añade el marcador; 2E escala el outbound de WhatsApp; 2F suma las
+llamadas de WhatsApp reutilizando 2D; 2G endurece.
 
 Principios para todas las subfases: proveedores detrás de interfaces con doble falso
-(`ProveedorTelefonia`, `ProveedorWhatsApp`, `ClienteLLM`); cumplimiento autoritativo en el servidor en
-el momento del contacto; reloj inyectable; `pytest` y `npm test` verdes sin Docker ni red.
+(`ProveedorTelefonia`, `ProveedorWhatsApp`, `ClienteLLM`, adaptador de ConversationRelay);
+cumplimiento autoritativo en el servidor en el momento del contacto; reloj inyectable; `pytest` y
+`npm test` verdes sin Docker ni red.
 
 ---
 
@@ -547,6 +567,9 @@ class ProveedorTelefonia(Protocol):
 ```
 `crear_llamada_saliente` (ADR-0003) se añade en la Fase 3. `validar_firma` delega en
 `twilio_firma.validar_firma(url, params, firma, TWILIO_AUTH_TOKEN)` en ambas implementaciones.
+
+> *Revisión de alcance 2026-10-28*: `crear_llamada_saliente` se adelanta a 2D (marcador IA) y
+> `incoming_allow` pasa a `True` en 2D para recibir traspasos de la IA (§7.3, ADR-0003).
 
 **`POST /api/v1/telefonia/twiml/saliente`** (firma Twilio). Parámetros usados (form): `CallSid`,
 `From` (`client:agente_<id>`), `AccountSid`, y los personalizados `campana_cliente_id` y `telefono_id`
@@ -1253,7 +1276,10 @@ en verde; `docker compose up` permite el flujo completo de consola con el softph
 
 # Subfases siguientes (nivel medio)
 
-## 7. Subfases 2B-2F
+## 7. Subfases 2B-2G
+
+> Numeración revisada el 2026-10-28 (ver nota de §0): 2C núcleo IA + chat; **2D voz IA + marcador
+> (nueva)**; 2E = antigua 2D; 2F = antigua 2E, ahora atendida por IA; 2G = antigua 2F.
 
 ### 7.1 Subfase 2B — WhatsApp base y bandeja humana (migración `0003`)
 
@@ -1319,13 +1345,18 @@ NULL, UNIQUE `numero_e164`+`aplica_a`+`canal`), `tipificaciones.conversacion_id`
 duplicados y desorden de webhooks (idempotencia); el estado `read` no siempre llega (privacidad del
 usuario); coste de mensajes de servicio desde oct-2026; calidad/bloqueo del número por reportes de spam.
 
-### 7.2 Subfase 2C — Agente IA en WhatsApp (migración `0004`)
+### 7.2 Subfase 2C — Núcleo del agente IA + chat de WhatsApp (migración `0004`)
 
 **Alcance** (ADR-0014, 0015, 0016, 0018)
-- Módulo `agente_ia`: `llm.py` (`ClienteLLM`, `ClienteAnthropic`, `ClienteLLMFalso`), `prompts/`,
-  `herramientas/definiciones.py` (puro, ordenado por nombre, `strict: true`) y `ejecutores.py`,
-  `limites.py` (puro), `guardas.py` (puro: opt-out, petición de humano, montos respaldados, aviso),
-  `costes.py` (puro), `bucle.py` (`ejecutar_turno`), servicio y router.
+- Módulo `agente_ia` con **núcleo canal-agnóstico** (ADR-0014 §7): `contexto.py` (`ContextoInteraccion`
+  fijado por el servidor para una conversación o una llamada), `canal.py` (protocolo `CanalIA`:
+  recoger entrada nueva, enviar salida, marcar procesado, comprobar dueño; implementación `CanalChat`
+  en 2C; `CanalVoz` llega en 2D), `llm.py` (`ClienteLLM`, `ClienteAnthropic`, `ClienteLLMFalso`),
+  `prompts/sistema_chat_v1.md`, `herramientas/definiciones.py` (puro, ordenado por nombre,
+  `strict: true`, con tabla de disponibilidad por canal) y `ejecutores.py`, `limites.py` (puro),
+  `guardas.py` (puro: opt-out, petición de humano, montos respaldados, aviso; la guarda de montos
+  opera sobre un fragmento de texto, para poder aplicarla por frase en voz), `costes.py` (puro),
+  `bucle.py` (`ejecutar_turno` contra `CanalIA`), servicio y router.
 - Configuración IA por campaña (reglas de negociación versionadas, ofertas, modelo, esfuerzo,
   instrucciones, presupuesto, verificación) y activación (exige reglas válidas, plantilla y evaluación
   offline en verde).
@@ -1336,7 +1367,7 @@ usuario); coste de mensajes de servicio desde oct-2026; calidad/bloqueo del núm
 - Panel de supervisión de conversaciones IA, métricas y vista de acciones de la IA.
 - Evaluación offline obligatoria en `pytest` y runner online opcional.
 
-**Contenido del prompt de sistema** (`sistema_v1.md`, texto fijo, sin datos variables): identidad de
+**Contenido del prompt de sistema** (`sistema_chat_v1.md`, texto fijo, sin datos variables): identidad de
 asistente virtual de la empresa (constante de despliegue); objetivo según el tipo de campaña (llega en
 el `system` de contexto); no revelar información de la cuenta antes de `verificar_identidad`; cifras
 solo de herramientas; negociar empezando por la opción más favorable a la empresa y ceder gradualmente
@@ -1372,11 +1403,13 @@ llegan como mensajes de sistema; estilo WhatsApp (mensajes breves, sin tablas ni
 **Tablas**: `configuracion_ia_campana` (`campana_id` PK, `activa`, `modelo`, `esfuerzo`,
 `instrucciones`, `reglas` JSON, `version`, `verificacion` JSON, `presupuesto_usd_mensual`,
 `max_costo_conversacion_usd`, `max_turnos_conversacion`, `actualizado_por`, `actualizado_en`),
-`ofertas_campana`, `promesa_cuotas` (`promesa_id`, `numero`, `fecha`, `monto`), `historial_ia`,
-`acciones_ia`, `uso_ia`, `instrucciones_supervisor` (`conversacion_id`, `usuario_id`, `texto`,
-`aplicada_en`), `configuracion_global` (clave/valor: `ia_activa`); `conversaciones` + `modelo_ia`,
-`esfuerzo_ia`, `prompt_version`, `identidad_verificada`, `identidad_intentos`, `costo_usd_acumulado`,
-`turnos_ia`, `aviso_enviado`.
+`ofertas_campana`, `promesa_cuotas` (`promesa_id`, `numero`, `fecha`, `monto`), y —**canal-agnósticas**,
+con `conversacion_id` FK NULL + `llamada_id` FK llamadas.id NULL + CHECK "exactamente uno no nulo" e
+índices/UNIQUE por cada uno— `historial_ia`, `acciones_ia`, `uso_ia` (+ `canal`, `ttft_ms` NULL),
+`instrucciones_supervisor`; `configuracion_global` (clave/valor: `ia_activa`). `conversaciones` ya trae
+de 2B `modelo_ia`, `esfuerzo_ia`, `prompt_version`, `identidad_verificada`, `identidad_intentos`,
+`costo_usd_acumulado`, `turnos_ia`, `aviso_ia_enviado_en`. (`llamadas` existe desde 2A, así que la FK
+`llamada_id` se puede crear ya en `0004`; en 2C siempre es nula.)
 
 **Endpoints principales**
 - `GET/PUT /api/v1/campanas/{id}/ia` (A, S): configuración y reglas (validación estricta, versión +1,
@@ -1385,9 +1418,9 @@ llegan como mensajes de sistema; estilo WhatsApp (mensajes breves, sin tablas ni
 - `GET /api/v1/supervision/conversaciones?campana_id=&atendida_por=&con_acuerdo=`;
   `POST /api/v1/conversaciones/{id}/instrucciones` `{ "texto": "…" }`;
   `POST /api/v1/conversaciones/{id}/devolver-ia`; `GET /api/v1/conversaciones/{id}/acciones-ia`.
-- `GET /api/v1/supervision/ia/metricas?campana_id=&desde=&hasta=`.
+- `GET /api/v1/supervision/ia/metricas?campana_id=&desde=&hasta=&canal=`.
 - `PUT /api/v1/configuracion/ia` (A) `{ "ia_activa": false }`.
-- CLI: `python -m app.evaluacion_ia [--real] [--casos patrón] [--modelo …] [--esfuerzo …]`.
+- CLI: `python -m app.evaluacion_ia [--real] [--casos patrón] [--modelo …] [--esfuerzo …] [--canal chat]`.
 - Evento WS: `ia.alerta` (`presupuesto`, `errores`, `kill_switch`, `rechazo_modelo`).
 
 **Variables**: `IA_PROVEEDOR=falso|anthropic`, `ANTHROPIC_API_KEY`, `IA_HABILITADA=true`,
@@ -1396,6 +1429,12 @@ llegan como mensajes de sistema; estilo WhatsApp (mensajes breves, sin tablas ni
 `IA_MAX_CARACTERES_ENTRADA=2000`, `IA_PRECIOS_JSON` (por defecto: opus 4/20, sonnet 2/10, haiku
 0.10/0.50 USD por MTok), `IA_AVISO_ASISTENTE`, `IA_FRASES_OPT_OUT`, `IA_FRASES_HUMANO`,
 `RETENCION_TRANSCRIPCIONES_DIAS=365`.
+
+**Previsión para voz (sin trabajo de voz en 2C)**: el bucle no asume "mensaje de WhatsApp" (usa
+`CanalIA`); las herramientas no asumen `conversacion_id` (usan `ContextoInteraccion`); la verificación
+de citas recibe del canal la lista de textos del cliente; las tablas de IA admiten `llamada_id`; el
+evaluador admite `canal` en los casos. *Acepta*: un test con un `CanalFalso` mínimo (sin WhatsApp)
+ejecuta un turno completo con herramientas.
 
 **Coste orientativo** (a validar con `uso_ia` en la evaluación online): una conversación de unos 8
 turnos con Opus 5.5 y esfuerzo `medium`, con el prefijo de herramientas y sistema cacheado (lectura a
@@ -1409,7 +1448,150 @@ positivos de las guardas; latencia por turno; coste; transmisión internacional 
 frecuentes en WhatsApp (no se procesan: se pide texto o se deriva); cambios de la política de Meta
 sobre IA.
 
-### 7.3 Subfase 2D — Campañas outbound de WhatsApp (migración `0005`)
+### 7.3 Subfase 2D — Agente IA de voz telefónica + marcador IA (migración `0005`)
+
+Decisiones: ADR-0020 (voz IA con ConversationRelay) y ADR-0021 (marcador IA). Se detallará a nivel de
+contrato (`fase-2d.md`) al iniciar la subfase, tras la verificación V1-V6 de §8.3.
+
+**Alcance**
+1. **Servicio `voz-ia`** (`app.voz_ia:app`, servicio de docker-compose; en desarrollo puede montarse en
+   la API con `VOZ_IA_EN_API=true`): WebSocket de ConversationRelay, sesiones asíncronas, BD en hilos,
+   token de sesión de un uso, reconexión por la URL `action`, drenaje en `SIGTERM`, latido.
+2. **Adaptador de ConversationRelay** (`app/integraciones/voz_ia/`): traducción de mensajes
+   (`setup`, `prompt`, `dtmf`, `interrupt`, `error` ↔ `text`, `end`) y construcción del TwiML
+   `<Connect action><ConversationRelay/></Connect>`; doble falso para tests.
+3. **`CanalVoz`** sobre el núcleo de 2C: `ClienteLLM.crear_mensaje_stream` (`AsyncAnthropic`,
+   `client.messages.stream`, `eager_input_streaming: true`), turno en streaming con **guarda por frase**,
+   frase de relleno fija en herramientas lentas, interrupciones, silencios, duración máxima,
+   `prompts/sistema_voz_v1.md`, modelo/esfuerzo de voz por campaña.
+4. **Aviso legal** determinista (asistente virtual + grabación + asesor), **identidad** con DTMF,
+   **opt-out por voz** determinista y por herramienta (`canal=voz`), **petición de humano** (frases y
+   DTMF 0), **constancia** dictada del acuerdo.
+5. **Salientes con AMD asíncrono** (sin mensaje en buzón) y **entrantes PSTN** al número de la empresa
+   (resolución por número como en 2B: un único registro de una campaña con voz IA → IA; 0 o varios →
+   traspaso a humano o devolución).
+6. **Traspaso** a un agente humano disponible asignado a la campaña (`<Dial><Client>`), espera corta con
+   reintentos y **devolución de llamada** (`requiere_humano`); el softphone pasa a
+   `incoming_allow=True` y `device.register()`; la consola muestra ficha, resumen y transcripción del
+   traspaso entrante.
+7. **Transcripción y grabación** de toda la llamada; **tipificación automática** con la tabla de
+   efectos de 2A (ADR-0020 §10).
+8. **Marcador IA** (ADR-0021): `campanas.voz_modo`, activación y kill switch de voz, tick periódico con
+   concurrencia por campaña y global, ritmo (CPS), presupuesto, margen de fin de franja, reserva
+   `reserva_origen='marcador'` con el orden de bloqueos de 2A, cumplimiento autoritativo, creación REST
+   con reconciliación, reintentos por resultado técnico; correcciones de 2A en `reserva_vigente`,
+   `tomar` y `_llamada_pendiente_de_otro` (reservas y llamadas sin usuario).
+9. **Supervisión**: llamadas IA activas, transcripción en vivo (eventos con ids + REST), instruir,
+   forzar traspaso, colgar; estado del marcador por campaña; métricas de voz (contactabilidad, AMD,
+   acuerdos, traspasos, devoluciones, latencia p50/p95, coste por minuto).
+10. **Evaluación de voz** (ADR-0018 ampliado): casos con `canal: "voz"` (interrupciones, DTMF,
+    silencios, contestador, cifras dictadas, traspaso sin humanos) en el harness offline.
+
+**No incluye**: llamadas de WhatsApp (2F); escucha/susurro en vivo (Fase 5); STT/TTS propios (Fase 5);
+devolver a la IA una llamada ya traspasada; dejar mensajes en buzón.
+
+**Tablas** (`0005`)
+- `llamadas` + `atendida_por` varchar(10) NOT NULL server_default `'humano'` CHECK in
+  (`humano`,`ia`); + `amd_resultado` varchar(20) NULL (`human`, `machine_start`, `machine_end_beep`,
+  `machine_end_silence`, `machine_end_other`, `fax`, `unknown`); + `traspasada_en` NULL. `usuario_id`
+  nulo mientras la atiende la IA (se fija al traspasar). Índice (`atendida_por`, `estado`).
+- `llamadas_ia` (`llamada_id` PK/FK, `campana_id`, `sesion_token_hash` UNIQUE NULL,
+  `sesion_expira_en`, `estado_sesion` CHECK in (`pendiente`,`activa`,`reconectando`,`traspasada`,
+  `finalizada`), `identidad_verificada`, `identidad_intentos`, `turnos_ia`, `reconexiones`,
+  `modelo_ia`, `esfuerzo_ia`, `prompt_version`, `aviso_dado_en`, `latido_en`, `costo_usd_llm`,
+  `costo_voz_usd`, `resultado_tecnico` NULL, `resumen` varchar(500) NULL, `finalizada_en`).
+- `transcripciones_llamada` (`id`, `llamada_id`, `secuencia`, `hablante` CHECK in
+  (`cliente`,`ia`,`sistema`,`agente`), `texto`, `tipo` CHECK in (`habla`,`dtmf`,`aviso`,
+  `constancia`,`relleno`), `interrumpida` bool, `dicho_hasta` NULL, `momento`; UNIQUE
+  (`llamada_id`,`secuencia`)). El DTMF del documento se guarda **enmascarado** (`***4050`).
+- `traspasos_llamada` (`id`, `llamada_id`, `motivo` (catálogo `MOTIVOS_COLA`), `resumen`, `prioridad`,
+  `estado` CHECK in (`pendiente`,`en_espera`,`timbrando`,`conectado`,`devolucion`,`abandonado`,
+  `cancelado`), `agente_id` NULL, `intentos_asignacion`, `creado_en`, `asignado_en`, `conectado_en`,
+  `cerrado_en`; `clave_activa` UNIQUE mientras no está cerrado).
+- `campana_clientes` + `reserva_origen` varchar(10) NULL CHECK in (`agente`,`marcador`); +
+  `requiere_humano` boolean NOT NULL default false. Índice (`campana_id`, `estado`,
+  `proximo_intento_en`).
+- `campanas` + `voz_modo` varchar(10) NOT NULL server_default `'humano'` CHECK in (`humano`,`ia`).
+- `configuracion_ia_campana` + `voz_activa`, `voz_modelo`, `voz_esfuerzo`, `voz_max_concurrentes`
+  (def. 5), `voz_limitar_por_humanos` (def. true), `voz_llamadas_por_humano` (def. 3),
+  `voz_reintentos` JSON, `voz_kill_switch_en_curso`, `voz_marcador_pausado`,
+  `max_costo_llamada_usd`, `max_duracion_llamada_segundos` (def. 900).
+- `configuracion_global` + `voz_max_concurrentes` y la fila `marcador_ia` (cerrojo del tick).
+- FK `historial_ia/acciones_ia/uso_ia/instrucciones_supervisor.llamada_id` ya existen (0004).
+
+**Orden global de bloqueos** (amplía 2A/2B): `estados_agente` → `clientes` → `campana_clientes` →
+`llamadas` → `llamadas_ia` → `traspasos_llamada`. El marcador toma `clientes` con `SKIP LOCKED` y luego
+reserva `campana_clientes` con UPDATE condicional; la asignación de traspasos toma `estados_agente`
+`FOR UPDATE SKIP LOCKED` → `clientes` → `campana_clientes`.
+
+**Contratos principales** (nivel medio; literales en `fase-2d.md`)
+- TwiML/webhooks (firma Twilio):
+  - `POST /api/v1/telefonia/twiml/voz-ia/inicio?llamada_id=` (URL de la llamada REST y de entrantes
+    resueltas) → `<Response><Connect action="{B}/api/v1/telefonia/twiml/voz-ia/fin-sesion?llamada_id=N">
+    <ConversationRelay url="wss://{HOST_VOZ}/api/v1/voz-ia/ws?sesion=<token>" welcomeGreeting="<VOZ_IA_AVISO>"
+    language="<VOZ_IA_IDIOMA>" ttsProvider="…" voice="…" transcriptionProvider="…" speechModel="…"
+    interruptible="speech" dtmfDetection="true" hints="…"/></Connect></Response>` (nombres exactos de
+    atributos a verificar, V1).
+  - `POST …/twiml/voz-ia/fin-sesion?llamada_id=` (callback `action`): según `HandoffData` y estado →
+    traspaso (`<Dial><Client>` o espera), reconexión (nuevo `<Connect>`), o `<Hangup/>`.
+  - `POST …/twiml/voz-ia/espera?traspaso_id=` (bucle `<Say>`/`<Play>`/`<Redirect>`) y
+    `POST …/twiml/voz-ia/traspaso-terminado?traspaso_id=` (`DialCallStatus` del agente).
+  - `POST /api/v1/telefonia/twiml/entrante` (Voice URL del número PSTN de la empresa).
+  - `POST /api/v1/telefonia/webhooks/amd?llamada_id=` (`AnsweredBy`, `MachineDetectionDuration`).
+  - Se reutilizan `webhooks/estado` y `webhooks/grabacion` (con `llamada_id`).
+- WebSocket del servicio `voz-ia`: `GET /api/v1/voz-ia/ws?sesion=<token>` (protocolo de
+  ConversationRelay; token de un uso, 60 s).
+- REST (JWT):
+  - `GET/PUT /api/v1/campanas/{id}/ia` amplía con el bloque `voz` (modelo, esfuerzo, concurrencia,
+    reintentos, límites); `POST /api/v1/campanas/{id}/ia/voz/activar|desactivar` (A, S);
+    `PUT /api/v1/campanas/{id}` admite `voz_modo` (solo con la campaña en `borrador` o `pausada`).
+  - `POST /api/v1/campanas/{id}/marcador/pausar|reanudar` (A, S); `GET /api/v1/supervision/marcador`
+    (A, S); `PUT /api/v1/configuracion/voz` (A) `{ "voz_max_concurrentes": 10 }`.
+  - `GET /api/v1/supervision/llamadas-ia?campana_id=&estado=` (A, S);
+    `GET /api/v1/llamadas/{id}/transcripcion` (A, S; G solo si la llamada le fue traspasada),
+    `GET /api/v1/llamadas/{id}/acciones-ia` (A, S);
+    `POST /api/v1/llamadas/{id}/instrucciones` `{ "texto": "…" }`, `POST /api/v1/llamadas/{id}/traspasar`,
+    `POST /api/v1/llamadas/{id}/colgar` (A, S).
+  - Consola (G): `GET /api/v1/consola/traspasos/{llamada_id}` → ficha + resumen IA + transcripción
+    (solo el agente destino, auditado `consola.traspaso_ver`); `GET /api/v1/consola/devoluciones`
+    (registros `requiere_humano` de sus campañas; se toman con el flujo de 2A).
+  - Simulación (solo `TELEFONIA_PROVEEDOR=falso` y `ENTORNO != produccion`):
+    `POST /api/v1/telefonia/simulacion/marcador/tick`;
+    `POST /api/v1/telefonia/simulacion/llamadas-ia/{id}/eventos` `{ "evento": "contestada_humano" |
+    "contestada_buzon" | "no_contesta" | "ocupado" | "fallida" | "colgada" | "ws_caido" }`;
+    `POST /api/v1/telefonia/simulacion/entrantes` `{ "numero": "+57300…" }`; simulador web
+    `/voz-ia/simulador` que habla el protocolo de ConversationRelay con texto.
+- Eventos WS (solo ids y catálogos): `llamada_ia.estado` `{llamada_id, campana_id, estado_sesion,
+  estado}`, `llamada_ia.turno` `{llamada_id, secuencia}`, `traspaso_voz.estado` `{traspaso_id,
+  llamada_id, campana_id, estado, agente_id}` (el agente destino lo recibe), `marcador.estado`
+  `{campana_id, activas, en_espera, marcadas_minuto, bloqueadas: {codigo: n}}`.
+
+**Variables nuevas**: `VOZ_IA_EN_API=false`, `VOZ_IA_HOST_PUBLICO` (wss), `VOZ_IA_IDIOMA=es-US`,
+`VOZ_IA_STT_PROVEEDOR=Deepgram`, `VOZ_IA_STT_MODELO=nova-3-general`, `VOZ_IA_TTS_PROVEEDOR=ElevenLabs`,
+`VOZ_IA_VOZ`, `VOZ_IA_HINTS`, `VOZ_IA_INTERRUPCION=speech`, `VOZ_IA_DTMF=true`, `VOZ_IA_AVISO`,
+`VOZ_IA_AMD=async`, `VOZ_IA_MENSAJE_BUZON=` (vacío), `VOZ_IA_SILENCIO_SEGUNDOS=8`,
+`VOZ_IA_CARACTERES_POR_SEGUNDO=15`, `VOZ_IA_RELLENO_MS=700`, `VOZ_IA_MAX_RECONEXIONES=2`,
+`VOZ_IA_MAX_SESIONES_POR_PROCESO=100`, `VOZ_IA_DRENAJE_SEGUNDOS=900`, `IA_VOZ_MODELO_POR_DEFECTO=claude-sonnet-5-5`,
+`IA_VOZ_ESFUERZO_POR_DEFECTO=low`, `IA_VOZ_MAX_TOKENS=2000`, `IA_VOZ_FRASES_OPT_OUT`,
+`IA_VOZ_FRASES_HUMANO`, `VOZ_TRASPASO_TIMEOUT_AGENTE_SEGUNDOS=20`, `VOZ_TRASPASO_REINTENTO_SEGUNDOS=10`,
+`VOZ_TRASPASO_ESPERA_MAX_SEGUNDOS=120`, `VOZ_HORARIO_HUMANOS` (JSON de franjas),
+`VOZ_DEVOLVER_ABANDONADOS=true`, `VOZ_COSTOS_MINUTO_JSON` (voz móvil 0,0377, fijo 0,07, relay 0,07,
+grabación 0,0025), `MARCADOR_IA_INTERVALO_SEGUNDOS=2`, `MARCADOR_IA_MAX_CONCURRENTES_GLOBAL=10`,
+`MARCADOR_IA_CPS=1`, `MARCADOR_IA_RESERVA_MINUTOS=20`, `MARCADOR_IA_MARGEN_FIN_FRANJA_MINUTOS=10`,
+`RETENCION_GRABACIONES_DIAS=365`.
+
+**Criterio de verificación sin credenciales**: con `IA_PROVEEDOR=falso`, `TELEFONIA_PROVEEDOR=falso`
+y el relay simulado, un test de extremo a extremo: tick del marcador → llamada creada (cumplimiento y
+reserva) → `contestada_humano` → WebSocket `setup` → aviso → `prompt` "sí, con ella" → DTMF del
+documento → herramientas (verificar, consultar, simular, registrar) → constancia dictada → `end` →
+tipificación `promesa_pago` `origen=agente_ia`, transcripción y `uso_ia` guardados; y variantes:
+buzón, interrupción a mitad de frase, monto no respaldado (no se habla), opt-out por voz, petición de
+humano con agente disponible (`<Dial><Client>`) y sin agente (espera → devolución), kill switch durante
+la llamada, WebSocket caído y reconexión.
+
+**Riesgos**: ver §8.3.
+
+### 7.4 Subfase 2E — Campañas masivas de WhatsApp (migración `0006`; antes 2D)
 
 **Alcance**: envíos masivos de una plantilla a los registros elegibles de una campaña; programación;
 pausa/reanudación/cancelación; worker con ritmo `WHATSAPP_MAX_MPS` (def. 10) y tope diario
@@ -1420,6 +1602,11 @@ destinatario; seguimiento de estados (enviado, entregado, leído, fallido) y res
 Twilio/Meta mapeados (límite de tasa, límite de marketing por usuario, número sin WhatsApp → marcar
 teléfono); métricas por envío. Las respuestas abren conversación atendida por la IA (2C) o por humanos.
 Recordatorios de promesas (plantilla utility) programados por el sistema con el mismo cumplimiento.
+**Nuevo por la revisión de voz**: plantilla utility de **constancia** de acuerdos y ventas cerrados por
+la IA en llamadas (si hay autorización de WhatsApp vigente), enviada por el servidor tras
+`registrar_acuerdo_pago`/`registrar_venta` en voz. Coordinación de canales: una campaña puede
+combinar voz IA y WhatsApp; la frecuencia omnicanal ya impide contactar por ambos en la misma semana si
+la política lo limita.
 
 **Tablas**: `envios_masivos` (`campana_id`, `plantilla_id`, `estado` `borrador|programado|en_curso|
 pausado|completado|cancelado`, `programado_para`, contadores); `envio_destinatarios` (`envio_id`,
@@ -1435,38 +1622,50 @@ motivo), `POST /api/v1/envios/{id}/programar|pausar|reanudar|cancelar`, `GET /ap
 puede reclasificarlas como marketing → coste y límites por usuario); límite de mensajería del
 portafolio; coste de evaluar la frecuencia a escala (índices y lotes).
 
-### 7.4 Subfase 2E — Llamadas de voz por WhatsApp (migración `0006`)
+### 7.5 Subfase 2F — Llamadas de WhatsApp atendidas por IA (migración `0007`; antes 2E con humanos)
 
-**Alcance**: solicitud de permiso de llamada (desde la consola, la bandeja o la herramienta de IA
-`solicitar_permiso_llamada`) y su seguimiento (concedido, denegado, caducado, revocado; llamadas no
-contestadas consecutivas); llamada saliente desde el softphone con
-`device.connect({ params: { …, canal: "whatsapp_llamada" } })` → TwiML
-`<Dial callerId="whatsapp:+57…"><WhatsApp>whatsapp:+57…</WhatsApp></Dial>` con las mismas validaciones
-del TwiML saliente + permiso vigente + opt-in; llamadas **entrantes** de WhatsApp en la TwiML App del
-sender → identificación del cliente → `<Dial><Client>` a un agente `disponible` asignado a la campaña
-(o mensaje y cola de atención si no hay); `VoiceGrant` con `incoming_allow=True`; tipificación con
-`canal=whatsapp_llamada`; `intentos_contacto` con el `iniciado_por` correcto.
+**Paso 0 — verificación** (bloquea el diseño de contrato de 2F, no su inicio): con una cuenta Twilio y
+un sender de WhatsApp con llamadas habilitadas, comprobar (W1) si una llamada **entrante** de WhatsApp
+puede responderse con `<Connect><ConversationRelay>`; (W2) si una **saliente** de WhatsApp puede
+crearse por REST (`to="whatsapp:+57…"`) o solo con `<Dial><WhatsApp>` desde otro TwiML, y si en ese
+caso puede conectarse a ConversationRelay; (W3) cómo notifica Twilio la respuesta al permiso de llamada
+y su caducidad; (W4) AMD y grabación en llamadas de WhatsApp.
+
+**Alcance (plan A, si W1/W2 se confirman)**: solicitud de permiso de llamada (herramienta de IA
+`solicitar_permiso_llamada` en el chat, desde la bandeja o la consola) y su seguimiento (concedido,
+denegado, caducado, revocado; no contestadas consecutivas); el **marcador IA** incluye
+`canal=whatsapp_llamada` para registros con permiso y opt-in vigentes (mismas validaciones y
+frecuencia, medio `whatsapp`); las llamadas entrantes de WhatsApp (TwiML App del sender →
+`POST /api/v1/telefonia/twiml/entrante-whatsapp`) se resuelven como en 2B y las atiende la IA con el
+mismo servicio `voz-ia` (AMD no aplica; aviso, identidad, traspaso y tipificación iguales, con
+`canal=whatsapp_llamada`).
+
+**Plan B (si no se confirman)**: lo previsto antes de la revisión: salientes desde el softphone con
+`<Dial callerId="whatsapp:+57…"><WhatsApp>whatsapp:+57…</WhatsApp></Dial>` (mismas validaciones del
+TwiML saliente + permiso + opt-in) y entrantes puenteadas a un agente humano `disponible`
+(`<Dial><Client>`) o cola/devolución; o Media Streams si W1 lo admite y se decide asumir STT/TTS
+propios (nuevo ADR).
 
 **Tablas**: `permisos_llamada_whatsapp` (`numero_e164`, `estado`, `solicitado_en`, `respondido_en`,
 `expira_en`, `no_contestadas_consecutivas`, `origen`); `llamadas` ya admite `canal` y `direccion`.
 
-**Endpoints**: `POST /api/v1/consola/registros/{id}/whatsapp/permiso-llamada`,
-`POST /api/v1/telefonia/twiml/entrante-whatsapp` (firma) y el webhook de respuesta al permiso según lo
-que exponga Twilio (**verificar al iniciar la subfase**).
+**Riesgos**: capacidad no confirmada de ConversationRelay sobre WhatsApp; requisitos de Meta
+(verificación del negocio, límite ≥ 2 000); reglas del permiso (las fuentes discrepan: 72 h vs. 7
+días; revocación tras llamadas no contestadas); calidad de audio; coste por minuto; interacción del
+permiso con la frecuencia de la Ley 2300.
 
-**Riesgos**: requisitos de Meta (verificación del negocio, límite ≥ 2 000); reglas del permiso (las
-fuentes discrepan: 72 h vs. 7 días; revocación tras llamadas no contestadas); calidad de audio; coste por
-minuto; interacción del permiso con la frecuencia de la Ley 2300.
+### 7.6 Subfase 2G — Operación y endurecimiento (migración `0008` si aplica; antes 2F)
 
-### 7.5 Subfase 2F — Operación y endurecimiento (migración `0007` si aplica)
-
-**Alcance**: tarea periódica de retención/anonimización de `mensajes` e `historial_ia`
-(`RETENCION_TRANSCRIPCIONES_DIAS`) y de referencias de grabaciones; evaluación online programada con
-informe y umbral para activar campañas (ADR-0018 §5); reportes de IA (acuerdos, montos, derivaciones,
-coste por acuerdo) y de mensajería; alertas operativas (fallos de envío, cola de atención,
-presupuesto); seguridad pendiente de `docs/pendientes.md` §3 (límite de intentos de login, revocación
-de tokens al cambiar la contraseña, refresh token + cookie `httpOnly`, CSP); pruebas de carga del worker
-y del WebSocket; healthcheck del worker; runbook del kill switch.
+**Alcance**: tarea periódica de retención/anonimización de `mensajes`, `transcripciones_llamada` e
+`historial_ia` (`RETENCION_TRANSCRIPCIONES_DIAS`) y de grabaciones (`RETENCION_GRABACIONES_DIAS`,
+borrado en Twilio y de referencias); evaluación online programada (chat y voz) con informe y umbral
+para activar campañas (ADR-0018 §5); reportes de IA por canal (acuerdos, montos, derivaciones y
+traspasos, coste por acuerdo y por minuto, latencia p50/p95 de voz, precisión del AMD) y de
+mensajería; alertas operativas (fallos de envío y de creación de llamadas, cola de atención y de
+traspasos, sesiones de voz huérfanas, presupuesto); seguridad pendiente de `docs/pendientes.md` §3
+(límite de intentos de login, revocación de tokens al cambiar la contraseña, refresh token + cookie
+`httpOnly`, CSP); pruebas de carga del worker, del WebSocket y del servicio `voz-ia` (sesiones
+concurrentes); healthcheck del worker y de `voz-ia`; runbook del kill switch y del drenaje de `voz-ia`.
 
 ---
 
@@ -1497,7 +1696,7 @@ Requisitos externos para **operar 2A con Twilio real** (no bloquean el desarroll
 - Texto legal del aviso de grabación aprobado por el área jurídica.
 - Tarifa por minuto a móviles y fijos de Colombia.
 
-### 8.2 No bloquean 2A (afectan a 2B-2F)
+### 8.2 No bloquean 2A (afectan a 2B-2G)
 
 **Legales** (área jurídica del cliente):
 - **S-E1**: ¿responder fuera de franja a un mensaje o llamada **iniciado por el cliente** está
@@ -1509,7 +1708,7 @@ Requisitos externos para **operar 2A con Twilio real** (no bloquean el desarroll
   `canal=todos`).
 - ¿Puede un **agente IA** celebrar acuerdos de pago y ventas vinculantes? ¿Qué constancia se exige
   (mensaje de constancia del servidor, aceptación con cita literal, conservación de la transcripción)?
-  ¿Derecho de retracto en ventas a distancia (Ley 1480) y cómo informarlo?
+  ¿Derecho de retracto en ventas a distancia (Ley 1480) y cómo informarlo? (En voz, ver §8.3.)
 - Texto del **aviso de asistente virtual** y del aviso de privacidad (tratamiento con IA y
   **transmisión internacional** a Anthropic y Twilio, Ley 1581 art. 26).
 - **Retención** de transcripciones y grabaciones (plazo).
@@ -1521,32 +1720,112 @@ Requisitos externos para **operar 2A con Twilio real** (no bloquean el desarroll
   precios; quién las aprueba.
 - Presupuesto de IA por campaña/mes y modelo/esfuerzo por defecto (Opus 5.5 `medium` frente a
   Sonnet/Haiku por coste).
-- Horario y dotación de agentes humanos para la cola de traspaso; SLA.
+- Horario y dotación de agentes humanos para la cola de traspaso; SLA. (Confirmado el 2026-10-28 que
+  **habrá** humanos de respaldo; quedan por definir horario, dotación y SLA.)
 - ¿Varias obligaciones por cliente en la misma campaña? (supuesto S2 de Fase 1; afecta a
   `consultar_obligacion`).
 - Tratamiento de notas de voz (¿transcripción en una fase futura?).
 
-**Requisitos externos para 2B-2E**:
+**Requisitos externos para 2B-2F**:
 - **Meta**: portafolio de negocio **verificado**, WhatsApp Business Account vinculada a Twilio,
   **sender** con número +57 registrado (no usado en la app de WhatsApp), nombre visible aprobado, perfil
   completo y método de pago.
 - **Plantillas** creadas y **aprobadas** (Content API) por categoría (marketing/utility), con botón de
-  baja en las de marketing; plantilla de solicitud de permiso de llamada (2E).
+  baja en las de marketing; plantilla de solicitud de permiso de llamada (2F) y de constancia de
+  acuerdos (2E).
 - **Límite de mensajería** del portafolio adecuado al volumen (y ≥ 2 000/24 h para llamadas WhatsApp
-  salientes en 2E); calidad del número.
+  salientes en 2F); calidad del número.
 - **Twilio**: sender de WhatsApp habilitado, webhooks de mensajería (entrante/estado) apuntando a
-  `PUBLIC_BASE_URL`, TwiML App asignada al sender para llamadas (2E).
+  `PUBLIC_BASE_URL`, TwiML App asignada al sender para llamadas (2F); ConversationRelay habilitado y
+  CPS adecuado (2D).
 - **Anthropic**: organización/workspace, `ANTHROPIC_API_KEY` como secreto, límites de tasa del nivel
-  contratado, acuerdo de tratamiento de datos y, si está disponible, retención cero.
+  contratado (en voz, peticiones concurrentes ≈ llamadas simultáneas), acuerdo de tratamiento de datos
+  y, si está disponible, retención cero.
 - **Precios** oficiales de Meta para Colombia (marketing ≈ US$0,0125 y utility ≈ US$0,0008 según
   fuentes secundarias; desde oct-2026 también se cobran servicio y utility dentro de la ventana) más
   US$0,005 por mensaje de Twilio.
 
 **Técnicos**:
 - La duración del permiso de llamada y cómo notifica Twilio la respuesta del usuario no están
-  confirmadas (fuentes discrepantes) → verificar al iniciar 2E.
+  confirmadas (fuentes discrepantes) → verificar al iniciar 2F (W3).
 - Exactitud de la guarda de montos (falsos positivos) → medir en la evaluación.
 - `LISTEN/NOTIFY` con varias instancias de API; el worker necesita su propio healthcheck.
 - Importación síncrona (≤ 50 000 filas) sigue vigente; si las bases crecen, pasarla a la cola de 2B.
-- Deuda de seguridad de Fase 1 (`docs/pendientes.md` §3) programada en 2F; si la plataforma se expone a
+- Deuda de seguridad de Fase 1 (`docs/pendientes.md` §3) programada en 2G; si la plataforma se expone a
   Internet antes, adelantar el límite de intentos de login.
+
+### 8.3 Revisión de alcance: IA en voz (2026-10-28)
+
+**Bloquean la siguiente subfase (2C)**: **ninguna**. El único cambio para 2C es de diseño interno
+(núcleo canal-agnóstico y tablas de IA con `llamada_id`), ya decidido aquí.
+
+**Bloquean el desarrollo de 2D**: **ninguna** (cliente de Claude falso, relay y telefonía falsos,
+simulador). Supuestos adoptados para 2D, a confirmar por el orquestador con el usuario (coste de cambio
+bajo, todo configurable salvo S-V7):
+- **(S-V1)** Una llamada saliente de la IA es un contacto iniciado por la empresa con las mismas reglas
+  que una humana (franjas, festivos, frecuencia omnicanal, RNE, exclusiones) más el aviso de asistente
+  virtual al inicio.
+- **(S-V2)** Aviso fijo al contestar, siempre (con o sin grabación): asistente virtual de la empresa,
+  llamada grabada y monitoreada, posibilidad de pedir un asesor.
+- **(S-V3)** Un acuerdo o venta verbal cerrado por la IA se registra si: el cliente acepta tras una
+  repetición explícita de las condiciones, la cita consta en la transcripción, el servidor dicta la
+  constancia y la grabación se conserva; en ventas, la constancia informa del derecho de retracto
+  (texto a definir por legal); si hay opt-in de WhatsApp, además plantilla de constancia (2E).
+- **(S-V4)** No se dejan mensajes en buzones de voz.
+- **(S-V5)** Si quien contesta cuelga antes de verificar identidad → `no_contesta` sin contacto directo
+  (cuenta como intento si `contar_intentos_sin_contacto`).
+- **(S-V6)** La devolución de llamada pedida por el cliente se hace dentro de franja y **no consume**
+  cupo de frecuencia (se trata como respuesta a una solicitud del consumidor; configurable
+  `entrantes.devolucion_cuenta_frecuencia=false`).
+- **(S-V7)** Las campañas en `voz_modo=ia` no aparecen en la lista de trabajo humana salvo los
+  registros `requiere_humano` (devoluciones).
+- **(S-V8)** Voz por defecto con `claude-sonnet-5-5` y `effort=low`; concurrencia por defecto 5 por
+  campaña y 10 global; 1 CPS; duración máxima 15 min; espera de traspaso 120 s.
+- **(S-V9)** Entrantes PSTN con 0 o varios registros candidatos → humano o devolución (la IA no
+  identifica clientes por documento entre varios).
+
+**Verificaciones técnicas al iniciar 2D** (con cuenta Twilio de pruebas; no bloquean el desarrollo con
+falsos, sí el contrato literal de `fase-2d.md`):
+- **V1** Atributos exactos de `<ConversationRelay>` (saludo no interrumpible, `hints`, `speechModel`,
+  normalización de TTS) y parámetros del callback `action` (`HandoffData`, estado de sesión).
+- **V2** Código de idioma y voces de español latinoamericano/colombiano (`es-CO`, `es-419`, `es-US`)
+  en Deepgram y ElevenLabs/Google; prueba de escucha con el área de calidad.
+- **V3** Si Twilio firma el *handshake* del WebSocket (`X-Twilio-Signature`) y si notifica el fin de
+  reproducción del TTS (para el temporizador de silencio).
+- **V4** Precisión del reconocimiento de cifras dictadas (documento, montos, fechas) y de DTMF.
+- **V5** AMD asíncrono con buzones de operadores colombianos (Claro/Comcel, Movistar, Tigo): tasas de
+  falso humano y falsa máquina; cargo por llamada del AMD.
+- **V6** Latencia real fin de habla → primer audio con Sonnet 5.5 y Haiku 5.5 `low` desde la región
+  del despliegue (objetivo p50 ≤ 1,2 s, p95 ≤ 2,5 s).
+
+**Bloquean operar 2D en producción** (no el desarrollo):
+- **Legal**: confirmación de que las llamadas comerciales y de cobranza realizadas por un agente de IA
+  son admisibles bajo la Ley 2300 de 2023 y el régimen de protección al consumidor (SIC), y de S-V1,
+  S-V2 (texto del aviso), S-V3 (validez y constancia de acuerdos verbales con IA; retracto en ventas,
+  Ley 1480), S-V6; Habeas Data: aviso de privacidad y autorización para tratar la **voz** y las
+  **transcripciones** (y si la grabación de voz se considera dato sensible/biométrico; no se usa para
+  identificar por voz), **transmisión internacional** a Anthropic, Twilio y sus subencargados de STT/TTS
+  (Deepgram, ElevenLabs/Google), plazos de retención de grabaciones y transcripciones.
+- **Contratos**: DPA con Anthropic (retención cero si está disponible) y Twilio (incluidos
+  subencargados de ConversationRelay).
+- **Negocio**: presupuesto por minuto y por campaña; concurrencia máxima; horario y dotación de humanos
+  de respaldo (decide `VOZ_HORARIO_HUMANOS` y `voz_llamadas_por_humano`); criterios de traspaso
+  adicionales (montos altos, quejas, clientes vulnerables); reglas de negociación por campaña.
+- **Twilio**: ConversationRelay habilitado en la cuenta, CPS adecuado, número +57 con paquete
+  regulatorio y su Voice URL para entrantes; `wss://` público hacia `voz-ia`.
+- **Calidad**: superar V2, V4, V5 y V6 y la evaluación online de voz (umbral de ADR-0018).
+
+**No bloquean 2D (riesgos a vigilar)**:
+- **Técnicos**: latencia (Opus 5.5 no desactiva el *thinking*; mitigado con Sonnet/Haiku `low`,
+  streaming y frases de relleno); calidad del español colombiano (acentos, ruido, regionalismos como
+  "cancelar" = pagar); errores de reconocimiento en cifras (mitigado con DTMF y confirmación
+  explícita); falsos positivos del AMD (cliente real colgado tras el saludo) y falsos negativos (IA
+  hablando a un buzón: el aviso no contiene datos personales); caída del WebSocket (reconexión);
+  interrupciones a mitad de herramienta; límites de tasa de Anthropic con muchas llamadas
+  simultáneas; un servicio nuevo que operar (`voz-ia`).
+- **Negocio**: coste (~US$0,13/min con Sonnet; ConversationRelay es más de la mitad); saturación de
+  humanos de respaldo si la IA deriva demasiado (concurrencia limitada por humanos y métricas de
+  derivación); reputación si la voz suena robótica o la IA insiste (tono acotado por prompt y
+  evaluación; opt-out siempre disponible).
+- **Regulatorios de Twilio/CRC**: caller ID y bloqueo de llamadas automatizadas por operadores
+  colombianos (etiquetado como spam) con volúmenes altos.
