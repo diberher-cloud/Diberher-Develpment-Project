@@ -22,6 +22,9 @@ export function formatearFechaHora(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : fechaHora.format(d);
 }
 
+/** Añade el punto final solo si el texto no termina ya en punto ("a. m."). */
+export const conPunto = (t: string) => (t.endsWith('.') ? t : `${t}.`);
+
 /** 'YYYY-MM-DD' -> 'DD/MM/YYYY' sin pasar por Date (evita desfases de zona). */
 export function formatearFecha(fecha: string | null | undefined): string {
   if (!fecha) return '—';

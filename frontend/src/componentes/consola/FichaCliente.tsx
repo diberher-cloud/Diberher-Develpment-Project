@@ -1,11 +1,8 @@
 import type { FichaCliente as Ficha } from '../../api/tipos';
 import { ETIQUETA_TIPO } from '../../utilidades/campanas';
 import { ETIQUETA_RESULTADO } from '../../utilidades/tipificacion';
-import { formatearCOP, formatearFecha, formatearFechaHora } from '../../utilidades/formato';
+import { conPunto, formatearCOP, formatearFecha, formatearFechaHora } from '../../utilidades/formato';
 import { WhatsAppTelefonoFicha } from './WhatsAppTelefonoFicha';
-
-/** Añade el punto final solo si el texto no termina ya en punto ("p. m."). */
-const conPunto = (t: string) => (t.endsWith('.') ? t : `${t}.`);
 
 /**
  * Datos del cliente y de la obligación. Los teléfonos se muestran siempre enmascarados. `permitirPlantilla` habilita el

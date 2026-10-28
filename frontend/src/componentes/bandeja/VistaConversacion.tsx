@@ -6,7 +6,7 @@ import type { ErrorApi } from '../../api/cliente';
 import type { CierreConversacion, Conversacion, ConfiguracionWhatsApp, Mensaje, Usuario } from '../../api/tipos';
 import { useConexionTiempoReal, useEventoTiempoReal } from '../../tiempo_real/TiempoRealContext';
 import { ETIQUETA_TIPO } from '../../utilidades/campanas';
-import { formatearFechaHora } from '../../utilidades/formato';
+import { conPunto, formatearFechaHora } from '../../utilidades/formato';
 import { useAhora } from '../../utilidades/useAhora';
 import { comoErrorApi, useCarga } from '../../utilidades/useCarga';
 import {
@@ -181,9 +181,10 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
         </p>
         {conv.estado === 'cerrada' && (
           <p className="alerta" role="status">
-            Conversación cerrada
-            {conv.motivo_cierre ? ` (${ETIQUETA_MOTIVO_CIERRE[conv.motivo_cierre]})` : ''}
-            {conv.cerrada_en ? ` el ${formatearFechaHora(conv.cerrada_en)}` : ''}.
+            {conPunto(
+              `Conversación cerrada${conv.motivo_cierre ? ` (${ETIQUETA_MOTIVO_CIERRE[conv.motivo_cierre]})` : ''}` +
+                (conv.cerrada_en ? ` el ${formatearFechaHora(conv.cerrada_en)}` : ''),
+            )}
           </p>
         )}
       </header>

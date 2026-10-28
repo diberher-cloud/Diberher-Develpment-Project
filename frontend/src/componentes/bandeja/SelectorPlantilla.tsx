@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { listarPlantillas } from '../../api/endpoints';
 import type { ErrorApi } from '../../api/cliente';
 import type { ResultadoEnvioPlantilla } from '../../api/tipos';
-import { formatearFechaHora } from '../../utilidades/formato';
+import { conPunto, formatearFechaHora } from '../../utilidades/formato';
 import { comoErrorApi, useCarga } from '../../utilidades/useCarga';
 import { nuevoUuid, previaPlantilla } from '../../utilidades/whatsapp';
 import { Campo } from '../Campo';
@@ -93,7 +93,7 @@ export function SelectorPlantilla({ campanaId, enviar, onEnviada, introduccion }
                   <li key={m.codigo}><strong>{m.codigo}</strong>: {m.mensaje}</li>
                 ))}
               </ul>
-              {bloqueo.proxima_ventana_inicio && <p>Próxima ventana: {formatearFechaHora(bloqueo.proxima_ventana_inicio)}.</p>}
+              {bloqueo.proxima_ventana_inicio && <p>Próxima ventana: {conPunto(formatearFechaHora(bloqueo.proxima_ventana_inicio))}</p>}
             </div>
           )}
           <button type="button" className="primario" disabled={!elegida || enviando} onClick={() => void alEnviar()}>

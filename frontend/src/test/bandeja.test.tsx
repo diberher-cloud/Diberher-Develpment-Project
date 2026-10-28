@@ -394,6 +394,17 @@ describe('Bandeja: historial paginado hacia atrás', () => {
   });
 });
 
+describe('Bandeja: puntuación de fechas', () => {
+  it('la conversación cerrada en la mañana termina en un solo punto ("a. m.")', async () => {
+    iniciarSesionComo('agente');
+    servidor({ conv: conversacion({ estado: 'cerrada', motivo_cierre: 'agente', cerrada_en: '2026-10-26T14:00:00Z', puede_responder: false }) });
+    renderizarAppTiempoReal('/bandeja?conversacion=12');
+    const aviso = await screen.findByText(/Conversación cerrada \(Cerrada por el agente\) el/);
+    expect(aviso.textContent).toMatch(/a\.\s?m\.$/);
+    expect(aviso.textContent).not.toContain('..');
+  });
+});
+
 describe('Bandeja: estado de los mensajes y retenidos', () => {
   it('muestra fallido con el mensaje del error y retenido con la hora programada', async () => {
     iniciarSesionComo('agente');
