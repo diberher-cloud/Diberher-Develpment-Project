@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listarCampanas, listarConversaciones } from '../../api/endpoints';
 import type { AtendidaPor, EstadoConversacion, Usuario } from '../../api/tipos';
 import { useConexionTiempoReal, useEventoTiempoReal } from '../../tiempo_real/TiempoRealContext';
 import { formatearFechaHora } from '../../utilidades/formato';
+import { useAgrupador } from '../../utilidades/useAgrupador';
 import { useCarga } from '../../utilidades/useCarga';
 import { ETIQUETA_ATENDIDA_POR, numeroVisible } from '../../utilidades/whatsapp';
 import { Campo } from '../Campo';
@@ -41,7 +42,28 @@ export function ListaConversaciones({ usuario, version, seleccionada, onAbrir }:
   const cargadorCampanas = useCallback(() => (gestor ? listarCampanas({ page_size: 100 }) : Promise.resolve(null)), [gestor]);
   const { datos: campanas } = useCarga(cargadorCampanas);
 
-  useEventoTiempoReal(['conversacion.mensaje', 'conversacion.estado'], recargar);
+  // Eventos agrupados (~1 s) y solo los que pueden afectar a esta lista.
+  const programar = useAgrupador<'lista'>(1000, () => recargar());
+  const idsLista = useRef(new Set<number>());
+  useEffect(() => {
+    idsLista.current = new Set((datos?.items ?? []).map((c) => c.id));
+  }, [datos]);
+  useEventoTiempoReal(['conversacion.mensaje', 'conversacion.estado'], (e) => {
+    if (e.tipo !== 'conversacion.mensaje' && e.tipo !== 'conversacion.estado') return;
+    const d = e.datos;
+    const enLista = idsLista.current.has(d.conversacion_id);
+    const campanaOk =
+      !gestor || campana === '' || (campana === 'sin' ? d.campana_id === null : d.campana_id === Number(campana));
+    if (e.tipo === 'conversacion.mensaje') {
+      // Un cambio de estado de entrega no modifica nada de lo que muestra la lista.
+      if (e.datos.accion === 'estado') return;
+      if (!enLista && (estado === 'cerrada' || !campanaOk)) return;
+    } else if (!enLista) {
+      if (e.datos.estado !== estado || !campanaOk) return;
+      if (gestor && atendidaPor !== '' && e.datos.atendida_por !== atendidaPor) return;
+    }
+    programar('lista');
+  });
 
   return (
     <section aria-labelledby="t-lista" className="tarjeta">

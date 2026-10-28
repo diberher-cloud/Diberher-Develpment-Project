@@ -5,6 +5,7 @@ import {
 import type { ErrorApi } from '../../api/cliente';
 import type { CierreConversacion, Conversacion, ConfiguracionWhatsApp, Mensaje, Usuario } from '../../api/tipos';
 import { useConexionTiempoReal, useEventoTiempoReal } from '../../tiempo_real/TiempoRealContext';
+import { useAgrupador } from '../../utilidades/useAgrupador';
 import { ETIQUETA_TIPO } from '../../utilidades/campanas';
 import { conPunto, formatearFechaHora } from '../../utilidades/formato';
 import { useAhora } from '../../utilidades/useAhora';
@@ -46,11 +47,15 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
   const cercaDelFondo = useRef(true);
   const alturaPrevia = useRef<number | null>(null);
   const primeraCarga = useRef(true);
+  // `apertura=true` (auditoría de la visita) se envía una sola vez por conversación abierta.
+  const aperturaPendiente = useRef(true);
 
   // Carga inicial y recarga tras reconexión del WebSocket (se fusiona con lo ya cargado).
   const cargar = useCallback(async () => {
+    const apertura = aperturaPendiente.current;
+    aperturaPendiente.current = false;
     try {
-      const [c, p] = await Promise.all([obtenerConversacion(id), listarMensajes(id, { limite: LIMITE })]);
+      const [c, p] = await Promise.all([obtenerConversacion(id, apertura), listarMensajes(id, { limite: LIMITE })]);
       setConv(c);
       setMensajes((prev) => fusionarMensajes(prev, p.items));
       if (primeraCarga.current) setHayMas(p.hay_mas);
@@ -84,14 +89,25 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
   }, [id]);
 
   // Solo los eventos de ESTA conversación alteran la vista; los demás los atienden las listas.
+  // Los eventos se agrupan: una ráfaga produce a lo sumo una recarga de mensajes y una de la conversación.
+  const idsCargados = useRef(new Set<number>());
+  useEffect(() => {
+    idsCargados.current = new Set(mensajes.map((m) => m.id));
+  }, [mensajes]);
+  const programar = useAgrupador<'conversacion' | 'mensajes'>(600, (claves) => {
+    if (claves.has('mensajes')) void traerRecientes();
+    if (claves.has('conversacion')) void recargarConversacion();
+  });
   useEventoTiempoReal('conversacion.mensaje', (e) => {
     if (e.tipo !== 'conversacion.mensaje' || e.datos.conversacion_id !== id) return;
-    void traerRecientes();
-    void recargarConversacion();
+    programar('mensajes');
+    // Un cambio de estado (enviado/entregado/leído) de un mensaje ya cargado no altera la conversación.
+    const soloEstado = e.datos.accion === 'estado' && idsCargados.current.has(e.datos.mensaje_id);
+    if (!soloEstado) programar('conversacion');
   });
   useEventoTiempoReal('conversacion.estado', (e) => {
     if (e.tipo !== 'conversacion.estado' || e.datos.conversacion_id !== id) return;
-    void recargarConversacion();
+    programar('conversacion');
   });
 
   const esDueno = !!conv && conv.estado === 'abierta' && conv.atendida_por === 'humano' && conv.usuario_asignado?.id === usuario.id;

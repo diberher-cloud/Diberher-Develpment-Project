@@ -138,7 +138,9 @@ export const listarConversaciones = (
     usuario_id?: number | '';
   },
 ) => solicitar<Pagina<ConversacionResumen>>('GET', '/conversaciones', { params: { ...p } });
-export const obtenerConversacion = (id: number) => solicitar<Conversacion>('GET', `/conversaciones/${id}`);
+/** `apertura=true` solo al abrir la conversación en la bandeja (audita `conversacion.ver`); las recargas van sin él. */
+export const obtenerConversacion = (id: number, apertura = false) =>
+  solicitar<Conversacion>('GET', `/conversaciones/${id}`, { params: { apertura: apertura ? true : undefined } });
 export const listarMensajes = (id: number, p: { antes_de?: number; limite?: number } = {}) =>
   solicitar<PaginaMensajes>('GET', `/conversaciones/${id}/mensajes`, { params: { ...p } });
 export const marcarLeida = (id: number) => solicitar<void>('POST', `/conversaciones/${id}/leida`);

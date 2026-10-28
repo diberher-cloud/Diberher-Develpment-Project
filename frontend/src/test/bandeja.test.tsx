@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversacion, ItemCola, Mensaje } from '../api/tipos';
 import { hoyBogota, sumarDias } from '../utilidades/formato';
 import {
-  abrirSocket, emitirEvento, errorApi, iniciarSesionComo, instalarWebSocketFalso, renderizarAppTiempoReal, respuesta,
+  abrirSocket, campanaEjemplo, emitirEvento, errorApi, iniciarSesionComo, instalarWebSocketFalso, renderizarAppTiempoReal, respuesta,
   simularFetch, WebSocketFalso, type Manejador,
 } from './utiles';
 import {
@@ -579,5 +579,83 @@ describe('Bandeja: cola y errores', () => {
     renderizarAppTiempoReal('/bandeja?conversacion=12');
     expect(await screen.findByText('No puede ver esta conversación.')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Reintentar' }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('Bandeja: apertura auditada y recargas agrupadas', () => {
+  const evMsg = (id: number, accion: 'nuevo' | 'estado', mensajeId: number) => ({
+    tipo: 'conversacion.mensaje' as const,
+    datos: { conversacion_id: id, mensaje_id: mensajeId, campana_id: 1, usuario_asignado_id: 1, direccion: 'saliente' as const, autor: 'agente' as const, estado: 'entregado' as const, accion },
+  });
+  const urlsGet = (m: ReturnType<typeof simularFetch>, ruta: string) =>
+    llamadas(m).filter((x) => x.startsWith('GET ') && x.replace('GET ', '').split('&')[0] === ruta);
+
+  it('envía apertura=true una sola vez al abrir y sin el parámetro en recargas por eventos y reconexión', async () => {
+    iniciarSesionComo('agente');
+    const { m } = servidor();
+    renderizarAppTiempoReal('/bandeja?conversacion=12');
+    const ws = await abrirSocket(1, 'agente');
+    await screen.findByText('Hola, quiero pagar');
+    expect(urlsGet(m, '/api/v1/conversaciones/12?apertura=true')).toHaveLength(1);
+    emitirEvento(ws, { tipo: 'conversacion.estado', datos: { conversacion_id: 12, campana_id: 1, estado: 'abierta', atendida_por: 'humano', usuario_asignado_id: 1, usuario_anterior_id: null, motivo_cierre: null } });
+    await waitFor(() => expect(urlsGet(m, '/api/v1/conversaciones/12')).toHaveLength(1), { timeout: 3000 });
+    act(() => ws.caer(1006));
+    await waitFor(() => expect(WebSocketFalso.instancias.length).toBe(2), { timeout: 3000 });
+    await abrirSocket(1, 'agente');
+    await waitFor(() => expect(urlsGet(m, '/api/v1/conversaciones/12')).toHaveLength(2), { timeout: 3000 });
+    expect(llamadas(m).filter((x) => x.includes('apertura=true'))).toHaveLength(1);
+  });
+
+  it('una ráfaga de eventos de estado de mensajes ya cargados recarga solo los mensajes, una vez', async () => {
+    iniciarSesionComo('agente');
+    const { m } = servidor({ mensajes: [mensaje({ id: 101 })] });
+    renderizarAppTiempoReal('/bandeja?conversacion=12');
+    const ws = await abrirSocket(1, 'agente');
+    await screen.findByText('Hola, quiero pagar');
+    const msgs = () => urlsGet(m, '/api/v1/conversaciones/12/mensajes?limite=50').length;
+    const antesMsgs = msgs();
+    const antesConv = urlsGet(m, '/api/v1/conversaciones/12').length;
+    for (let i = 0; i < 5; i++) emitirEvento(ws, evMsg(12, 'estado', 101));
+    await waitFor(() => expect(msgs()).toBe(antesMsgs + 1), { timeout: 3000 });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(msgs()).toBe(antesMsgs + 1);
+    expect(urlsGet(m, '/api/v1/conversaciones/12').length).toBe(antesConv);
+  });
+
+  it('una ráfaga de mensajes nuevos produce una recarga de conversación y una de mensajes', async () => {
+    iniciarSesionComo('agente');
+    const { m } = servidor();
+    renderizarAppTiempoReal('/bandeja?conversacion=12');
+    const ws = await abrirSocket(1, 'agente');
+    await screen.findByText('Hola, quiero pagar');
+    const antesMsgs = urlsGet(m, '/api/v1/conversaciones/12/mensajes?limite=50').length;
+    for (let i = 0; i < 4; i++) emitirEvento(ws, { ...evMsg(12, 'nuevo', 500 + i), datos: { ...evMsg(12, 'nuevo', 500 + i).datos, direccion: 'entrante', autor: 'cliente', estado: 'recibido' } });
+    await waitFor(() => expect(urlsGet(m, '/api/v1/conversaciones/12').length).toBe(1), { timeout: 3000 });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(urlsGet(m, '/api/v1/conversaciones/12').length).toBe(1);
+    expect(urlsGet(m, '/api/v1/conversaciones/12/mensajes?limite=50').length).toBe(antesMsgs + 1);
+  });
+
+  it('la lista del supervisor agrupa los eventos y no recarga por estados de entrega ni por otra campaña filtrada', async () => {
+    iniciarSesionComo('supervisor');
+    const { m } = servidor({ extra: [get('/campanas', () => pagina([campanaEjemplo({ id: 1 }), campanaEjemplo({ id: 2, nombre: 'Venta' })]))] });
+    renderizarAppTiempoReal('/bandeja');
+    const ws = await abrirSocket(1, 'supervisor');
+    await screen.findByText(/Cobranza cartera octubre/);
+    const lista = () => llamadas(m).filter((x) => x.startsWith('GET /api/v1/conversaciones?') && x.includes('page_size=20')).length;
+    const u = userEvent.setup();
+    await u.selectOptions(screen.getByLabelText('Campaña'), '2');
+    await waitFor(() => expect(llamadas(m).some((x) => x.includes('campana_id=2'))).toBe(true));
+    const base = lista();
+    // Estado de entrega y campaña distinta (conversación fuera de la lista): sin recarga.
+    emitirEvento(ws, evMsg(77, 'estado', 1));
+    emitirEvento(ws, { ...evMsg(77, 'nuevo', 2), datos: { ...evMsg(77, 'nuevo', 2).datos, campana_id: 1 } });
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(lista()).toBe(base);
+    // Ráfaga de mensajes nuevos de la campaña filtrada: una sola recarga.
+    for (let i = 0; i < 5; i++) emitirEvento(ws, { ...evMsg(78, 'nuevo', 10 + i), datos: { ...evMsg(78, 'nuevo', 10 + i).datos, campana_id: 2 } });
+    await waitFor(() => expect(lista()).toBe(base + 1), { timeout: 3000 });
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(lista()).toBe(base + 1);
   });
 });
