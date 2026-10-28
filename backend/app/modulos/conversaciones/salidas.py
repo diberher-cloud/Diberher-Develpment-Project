@@ -40,6 +40,8 @@ _ERRORES = {
     "VENTANA_CERRADA": "La ventana de 24 h se cerró antes de enviar.",
     "CLIENTE_OPT_OUT": "El cliente pidió no recibir mensajes.",
     "CONTACTO_NO_PERMITIDO": "El contacto ya no está permitido (exclusión o sin autorización).",
+    "FUERA_DE_FRANJA": "La plantilla ya no se podía enviar: fuera de la franja horaria.",
+    "PLANTILLA_NO_ENVIABLE": "La plantilla dejó de estar disponible antes de enviarse.",
     "ENVIO_INCIERTO": "No se pudo confirmar el envío; revise antes de reenviar.",
     "RESPUESTA_FUERA_DE_FRANJA": "La respuesta quedó fuera de la franja horaria permitida.",
 }

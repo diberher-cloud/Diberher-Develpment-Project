@@ -104,6 +104,13 @@ def tomar(db: Session, trabajador: str, ahora: datetime, limite: int) -> list[Tr
         if recuperado and t.intentos > t.max_intentos:
             # Un bloqueo caducado más veces de las permitidas: el trabajo mata al worker.
             t.ultimo_error = "BloqueoCaducado:AGOTADO"
+            registro.cargar_manejadores()
+            gancho = registro.AL_AGOTAR.get(t.tipo)
+            if gancho is not None:
+                try:
+                    gancho(db, dict(t.payload or {}), "AGOTADO", ahora)
+                except Exception as exc_gancho:
+                    logger.error("Gancho de agotamiento falló: %s", type(exc_gancho).__name__)
             _marcar_fallido(db, t, "AGOTADO", ahora)
             continue
         t.estado = "en_proceso"
@@ -139,6 +146,10 @@ def ejecutar(db_factory: Callable[[], Session], trabajo_id: int, reloj: Reloj) -
             return
         tipo, payload = trabajo.tipo, dict(trabajo.payload or {})
         ahora = reloj()
+        # El bloqueo se renueva al EMPEZAR cada trabajo del lote: otro worker no retoma uno
+        # que sigue en curso aunque el lote haya tardado más que `WORKER_BLOQUEO_SEGUNDOS`.
+        trabajo.bloqueado_hasta = ahora + timedelta(seconds=get_settings().worker_bloqueo_segundos)
+        db.commit()
         manejador = registro.MANEJADORES.get(tipo)
         try:
             if manejador is None:
@@ -160,9 +171,20 @@ def ejecutar(db_factory: Callable[[], Session], trabajo_id: int, reloj: Reloj) -
             _registrar_fallo(db, trabajo_id, exc, payload, ahora)
 
 
+def restaurar_clave(db: Session, t: Trabajo) -> None:
+    """Un trabajo que vuelve a `pendiente` recupera su `clave_unica` (se anuló al tomarlo) salvo
+    que ya haya otro pendiente con esa clave."""
+    clave = registro.clave_unica_de(t.tipo, t.payload or {})
+    if clave is None or t.clave_unica is not None:
+        return
+    if db.scalar(select(Trabajo.id).where(Trabajo.clave_unica == clave)) is None:
+        t.clave_unica = clave
+
+
 def _reprogramar(db: Session, trabajo_id: int, desde: datetime, ahora: datetime) -> None:
     t = db.get(Trabajo, trabajo_id)
     assert t is not None
+    restaurar_clave(db, t)
     t.estado = "pendiente"
     t.disponible_desde = desde
     t.intentos = max(t.intentos - 1, 0)  # no cuenta como intento
@@ -200,6 +222,7 @@ def _registrar_fallo(
                 logger.error("Gancho de agotamiento falló: %s", type(exc_gancho).__name__)
         _marcar_fallido(db, t, codigo, ahora)
     else:
+        restaurar_clave(db, t)
         t.estado = "pendiente"
         t.disponible_desde = ahora + backoff(t.intentos)
         t.bloqueado_hasta = None

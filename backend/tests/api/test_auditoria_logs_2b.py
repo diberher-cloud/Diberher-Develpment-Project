@@ -43,7 +43,7 @@ def test_flujo_completo_sin_datos_personales_en_auditoria_payloads_y_logs(
         entrante(client, firmar_twilio, texto="SECRETO-ENTRANTE-1", ProfileName="Nombre Perfil")
         correr_trabajos()
         conv = db.scalar(select(Conversacion))
-        client.get(f"{API}/conversaciones/{conv.id}", headers=h_admin)
+        client.get(f"{API}/conversaciones/{conv.id}?apertura=true", headers=h_admin)
         client.post(f"{API}/conversaciones/{conv.id}/tomar", headers=ag)
         client.post(
             f"{API}/conversaciones/{conv.id}/mensajes",

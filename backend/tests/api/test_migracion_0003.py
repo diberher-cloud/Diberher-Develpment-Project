@@ -162,7 +162,7 @@ def test_upgrade_conserva_los_datos_de_2a_incluidas_las_hijas_en_cascada(tmp_pat
         assert con.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_downgrade_a_0002_borra_solo_los_opt_outs_de_whatsapp_y_de_sistema_y_conserva_el_resto(
+def test_downgrade_a_0002_conserva_los_opt_outs_que_0002_puede_representar(
     tmp_path,
 ):
     ruta = tmp_path / "m2.db"
@@ -174,10 +174,27 @@ def test_downgrade_a_0002_borra_solo_los_opt_outs_de_whatsapp_y_de_sistema_y_con
         insertar_exclusion(con, "+573001111111", "solicitud_titular", "whatsapp", "usuario", 1)
         insertar_exclusion(con, "+573002222222", "solicitud_titular", "todos", "sistema", None)
         insertar_exclusion(con, "+573003333333", "manual", "todos", "usuario", 1)
+        insertar_exclusion(con, "+573004444444", "solicitud_titular", "voz", "sistema", None)
+        # Duplicado tras convertir voz -> todos: queda una sola fila por (número, aplica_a).
+        insertar_exclusion(con, "+573003333333", "solicitud_titular", "voz", "usuario", 1)
     command.downgrade(cfg, "0002")
     with sqlite3.connect(ruta) as con:
         numeros = {f[0] for f in con.execute("select numero_e164 from exclusiones")}
-        assert numeros == {"+573009999999", "+573008888888", "+573003333333"}
+        # whatsapp se borra; el opt-out de sistema (todos) y el de voz se conservan con un
+        # usuario real como autor, para no volver a contactar a quien lo pidió.
+        assert numeros == {
+            "+573009999999", "+573008888888", "+573003333333", "+573002222222", "+573004444444",
+        }  # fmt: skip
+        assert (
+            con.execute("select count(*) from exclusiones where creado_por is null").fetchone()[0]
+            == 0
+        )
+        assert (
+            con.execute(
+                "select count(*) from exclusiones where numero_e164='+573003333333'"
+            ).fetchone()[0]
+            == 1
+        )
         columnas = {c[1] for c in con.execute("pragma table_info(exclusiones)")}
         assert not {"canal", "origen", "conversacion_id"} & columnas
         assert con.execute("select count(*) from campana_clientes").fetchone()[0] == 1

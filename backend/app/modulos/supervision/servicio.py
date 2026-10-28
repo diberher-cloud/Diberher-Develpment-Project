@@ -74,6 +74,7 @@ def listar_agentes(db: Session, ahora: datetime) -> list[AgenteSupervision]:
 
 # ---- Estado de la cola de trabajos y del worker (fase-2b.md §4.7) --------------------------------
 LATIDO_ACTIVO_SEGUNDOS = 60
+LATIDO_LISTADO_HORAS = 1  # los workers sin latido en la última hora no se listan
 
 
 class TrabajadorEstado(BaseModel):
@@ -108,7 +109,11 @@ def estado_trabajos(db: Session, ahora: datetime) -> EstadoTrabajos:
     from app.trabajos.modelos import LatidoWorker, Trabajo
 
     activo_desde = ahora - timedelta(seconds=LATIDO_ACTIVO_SEGUNDOS)
-    latidos = db.scalars(select(LatidoWorker).order_by(LatidoWorker.trabajador))
+    latidos = db.scalars(
+        select(LatidoWorker)
+        .where(LatidoWorker.ultimo_latido >= ahora - timedelta(hours=LATIDO_LISTADO_HORAS))
+        .order_by(LatidoWorker.trabajador)
+    )
     grupos = db.execute(
         select(Trabajo.tipo, Trabajo.estado, func.count(Trabajo.id))
         .group_by(Trabajo.tipo, Trabajo.estado)

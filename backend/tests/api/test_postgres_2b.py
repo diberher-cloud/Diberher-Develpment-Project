@@ -512,3 +512,68 @@ def test_p10_desconectado_y_tomar_del_mismo_agente_son_coherentes(pg):
         assert (c.atendida_por, c.usuario_asignado_id) == ("sin_asignar", None)
         pendientes = s.scalars(select(ColaAtencion).where(ColaAtencion.estado == "pendiente")).all()
         assert len(pendientes) == 1
+
+
+def test_s2_vincular_y_plantilla_de_consola_simultaneos_sin_interbloqueo(pg):
+    """El orden de bloqueo es clientes -> conversaciones también al vincular (revisión 2B)."""
+    from app.modulos.clientes.modelos import CampanaCliente, Telefono
+
+    with pg() as db:
+        admin = _usuario(db, "administrador", 0)
+        sup, ag = _usuario(db, "supervisor", 1), _usuario(db, "agente", 2)
+        esc = Escenario(db, admin.id)
+        camp = esc.campana(whatsapp_habilitado=True)
+        esc.asignar(camp, ag)
+        esc.estado(ag, "disponible", AHORA)
+        pl = plantilla(db)
+        casos = []
+        for i in range(4):
+            numero = f"+57311555000{i}"
+            cc = esc.registro(camp, numeros=(numero,), producto="Oro")
+            autorizar(db, numero=numero)
+            esc.reservar(cc, ag, AHORA)
+            conv = conversaciones.crear_conversacion(
+                db,
+                numero_cliente=numero,
+                numero_empresa=EMPRESA,
+                iniciada_por="cliente",
+                ahora=AHORA,
+                dueno=SinAsignar(),
+            )
+            conv.ultimo_entrante_en, conv.ventana_expira_en = AHORA, AHORA - timedelta(hours=1)
+            conversaciones.cambiar_dueno(db, conv, SinAsignar(), "sin_campana", None, AHORA)
+            db.commit()
+            casos.append((conv.id, cc.id, telefono_de(db, cc).id))
+        ids = dict(sup=sup.id, ag=ag.id, pl=pl.id)
+
+    for conv_id, cc_id, tel_id in casos:
+        barrera = threading.Barrier(2, timeout=10)
+
+        def vincular(conv_id=conv_id, cc_id=cc_id, barrera=barrera):
+            with pg() as s:
+                barrera.wait()
+                return conversaciones.vincular(s, s.get(Usuario, ids["sup"]), conv_id, cc_id, AHORA)
+
+        def plantilla_consola(cc_id=cc_id, tel_id=tel_id, barrera=barrera):
+            with pg() as s:
+                barrera.wait()
+                return servicio_envio.enviar_plantilla(
+                    s,
+                    usuario=s.get(Usuario, ids["ag"]),
+                    campana_cliente=s.get(CampanaCliente, cc_id),
+                    telefono=s.get(Telefono, tel_id),
+                    plantilla=s.get(PlantillaWhatsApp, ids["pl"]),
+                    conversacion=None,
+                    idempotencia_clave=uuid.uuid4(),
+                    ahora=AHORA,
+                )
+
+        r = _en_hilos([vincular, plantilla_consola])  # _en_hilos falla si algún hilo se cuelga
+        for x in r:
+            if isinstance(x, BaseException):
+                assert isinstance(x, ErrorApp), x  # un 409/422 de negocio es válido; no un deadlock
+    with pg() as s:
+        assert (
+            s.scalar(select(func.count(Conversacion.id)).where(Conversacion.estado == "abierta"))
+            >= 4
+        )

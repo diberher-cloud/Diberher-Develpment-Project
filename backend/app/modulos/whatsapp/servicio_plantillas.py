@@ -31,11 +31,13 @@ def _mapeo_completo(p: PlantillaWhatsApp) -> bool:
 
 def enviable(p: PlantillaWhatsApp) -> bool:
     """activa ∧ aprobada ∧ finalidad ∧ mapeo completo."""
+    marketing_sin_baja = p.categoria == "marketing" and not p.tiene_boton_baja
     return (
         p.activa
         and p.estado_aprobacion == "aprobada"
         and p.finalidad is not None
         and _mapeo_completo(p)
+        and not marketing_sin_baja
     )
 
 
@@ -167,7 +169,19 @@ def sincronizar(
             p.nombre, p.idioma, p.categoria, p.estado_aprobacion, p.motivo_rechazo, p.cuerpo,
             list(p.variables), p.botones, p.tiene_boton_baja,
         )  # fmt: skip
-        desactivar = p.activa and (cambio_contenido or r.estado_aprobacion != "aprobada")
+        sin_baja = r.categoria == "marketing" and not tiene_baja
+        desactivar = p.activa and (
+            cambio_contenido or r.estado_aprobacion != "aprobada" or sin_baja
+        )
+        if p.activa and sin_baja:
+            auditoria.registrar(
+                db,
+                "whatsapp.plantilla_desactivada",
+                usuario.id,
+                "plantilla_whatsapp",
+                p.id,
+                {"plantilla_id": p.id, "motivo": "marketing_sin_baja"},
+            )
         if cambio_contenido:
             p.mapeo_variables = {}
         if desactivar:

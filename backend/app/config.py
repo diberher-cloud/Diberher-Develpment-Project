@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     worker_intervalo_segundos: float = 1
     worker_lote: int = 10
     worker_bloqueo_segundos: int = 300
+    purga_eventos_huerfanos_dias: int = 7
+    whatsapp_media_concurrencia: int = 4
+    whatsapp_media_duracion_segundos: int = 30
 
     @model_validator(mode="after")
     def _validar_secreto(self) -> "Settings":
@@ -165,6 +168,9 @@ class Settings(BaseSettings):
             ("WORKER_INTERVALO_SEGUNDOS", self.worker_intervalo_segundos, 0.1, 60),
             ("WORKER_LOTE", self.worker_lote, 1, 100),
             ("WORKER_BLOQUEO_SEGUNDOS", self.worker_bloqueo_segundos, 30, 3600),
+            ("PURGA_EVENTOS_HUERFANOS_DIAS", self.purga_eventos_huerfanos_dias, 1, 365),
+            ("WHATSAPP_MEDIA_CONCURRENCIA", self.whatsapp_media_concurrencia, 1, 100),
+            ("WHATSAPP_MEDIA_DURACION_SEGUNDOS", self.whatsapp_media_duracion_segundos, 5, 300),
         )
         for nombre, valor, minimo, maximo in rangos:
             if not minimo <= valor <= maximo:

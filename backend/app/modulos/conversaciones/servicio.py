@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.errores import ErrorApp, detalle
 from app.modulos.auditoria import servicio as auditoria
 from app.modulos.campanas.modelos import Campana, CampanaAgente
-from app.modulos.clientes.modelos import CampanaCliente
+from app.modulos.clientes.modelos import CampanaCliente, Cliente
 from app.modulos.conversaciones import atencion
 from app.modulos.conversaciones import dueno as dueno_mod
 from app.modulos.conversaciones.dueno import IA, Dueno, Humano, SinAsignar
@@ -489,20 +489,26 @@ def vincular(
     previa = cargar(db, conversacion_id)
     if usuario.rol == "agente" and not es_dueno(previa, usuario):
         raise no_asignada()
+    # Orden global de bloqueos: `clientes` del candidato ANTES que la conversación (igual que el
+    # envío de plantilla); si no, vincular y una plantilla simultánea se interbloquean.
+    elegido = next(
+        (
+            c
+            for c in candidatos(db, previa.numero_cliente_e164)
+            if c.campana_cliente.id == campana_cliente_id
+        ),
+        None,
+    )
+    if elegido is not None:
+        db.execute(
+            select(Cliente.id).where(Cliente.id == elegido.cliente.id).with_for_update()
+        ).all()
     conv = bloquear(db, conversacion_id)
     exigir_abierta(conv)
     if conv.campana_cliente_id is not None:
         raise ErrorApp(
             409, "CONVERSACION_YA_VINCULADA", "La conversación ya está vinculada a un registro."
         )
-    elegido = next(
-        (
-            c
-            for c in candidatos(db, conv.numero_cliente_e164)
-            if c.campana_cliente.id == campana_cliente_id
-        ),
-        None,
-    )
     if elegido is None:
         raise ErrorApp(
             422,

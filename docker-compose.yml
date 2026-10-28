@@ -32,6 +32,7 @@ services:
 
   backend:
     <<: *backend-comun
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -54,6 +55,8 @@ services:
       backend:
         condition: service_healthy   # las migraciones las aplica `backend`
     command: python -m app.worker
+    restart: unless-stopped
+    stop_grace_period: 30s   # SIGTERM: termina el trabajo en curso antes de salir
     healthcheck:
       test: ["CMD", "python", "-m", "app.worker", "--healthcheck"]
       interval: 30s

@@ -34,6 +34,17 @@ MANEJADORES: dict[str, Manejador] = {}
 AL_AGOTAR: dict[str, AlAgotar] = {}
 
 
+def clave_unica_de(tipo: str, payload: dict[str, Any]) -> str | None:
+    """`clave_unica` original de los trabajos que la usan (se anula al tomarlos)."""
+    if tipo == "whatsapp.procesar_entrante" and "mensaje_id" in payload:
+        return f"entrante:{payload['mensaje_id']}"
+    if tipo == "whatsapp.enviar_mensaje" and "mensaje_id" in payload:
+        return f"enviar:{payload['mensaje_id']}"
+    if tipo in ("conversaciones.cerrar_inactivas", "trabajos.purgar"):
+        return f"periodico:{tipo}"
+    return None
+
+
 def cargar_manejadores() -> None:
     """Puebla `MANEJADORES` (idempotente)."""
     if "whatsapp.enviar_mensaje" in MANEJADORES:

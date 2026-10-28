@@ -109,8 +109,29 @@ class Trabajador:
             ejecutados += 1
         return ejecutados
 
+    def liberar_propios(self) -> int:
+        """Al arrancar: los trabajos `en_proceso` bloqueados por un worker con mi mismo id
+        (reinicio del contenedor con el mismo pid) vuelven a `pendiente` sin esperar al bloqueo."""
+        with self.fabrica() as db:
+            propios = list(
+                db.scalars(
+                    select(Trabajo).where(
+                        Trabajo.estado == "en_proceso", Trabajo.bloqueado_por == self.nombre
+                    )
+                )
+            )
+            for t in propios:
+                cola.restaurar_clave(db, t)
+                t.estado = "pendiente"
+                t.bloqueado_hasta = None
+                t.bloqueado_por = None
+                t.actualizado_en = self.reloj()
+            db.commit()
+            return len(propios)
+
     def ejecutar(self) -> None:
         registro.cargar_manejadores()
+        self.liberar_propios()
         logger.info("Worker %s iniciado.", self.nombre)
         while not self.parar.is_set():
             try:

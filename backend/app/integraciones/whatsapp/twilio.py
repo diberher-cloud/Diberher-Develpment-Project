@@ -4,6 +4,7 @@ orígenes)."""
 
 import json
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit
@@ -84,6 +85,10 @@ class ProveedorWhatsAppTwilio:
             raise ErrorProveedorWhatsApp(str(exc.code or exc.status), transitorio) from None
         except requests.ConnectTimeout:
             raise ErrorProveedorWhatsApp("CONEXION", transitorio=True) from None
+        except requests.ConnectionError as exc:
+            if _fallo_antes_de_conectar(exc):  # DNS / conexión rechazada: el cuerpo no salió
+                raise ErrorProveedorWhatsApp("CONEXION", transitorio=True) from None
+            raise ErrorProveedorWhatsApp("ENVIO_INCIERTO", transitorio=False) from None
         except Exception:
             # Pudo haberse enviado (p. ej. lectura caída): no se reintenta para no duplicar.
             raise ErrorProveedorWhatsApp("ENVIO_INCIERTO", transitorio=False) from None
@@ -227,6 +232,7 @@ class ProveedorWhatsAppTwilio:
             self._s.twilio_api_key_secret,
         )
         actual = url
+        inicio = time.monotonic()
         try:
             # Sin redirecciones automáticas: cada salto se valida a mano (máx. `MAX_SALTOS`) y
             # las credenciales solo viajan a la ruta válida de api.twilio.com.
@@ -245,15 +251,14 @@ class ProveedorWhatsAppTwilio:
                             if not self.url_media_valida(destino):
                                 credenciales = None
                             continue
-                        return self._leer(respuesta, max_bytes)
+                        return self._leer(respuesta, max_bytes, inicio)
         except (httpx.InvalidURL, httpx.UnsupportedProtocol):
             raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False) from None
         except httpx.HTTPError:
             raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True) from None
         raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
 
-    @staticmethod
-    def _leer(respuesta: httpx.Response, max_bytes: int) -> tuple[str, bytes]:
+    def _leer(self, respuesta: httpx.Response, max_bytes: int, inicio: float) -> tuple[str, bytes]:
         if respuesta.status_code in (404, 410):
             raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
         if respuesta.status_code == 429 or respuesta.status_code >= 500:
@@ -263,13 +268,29 @@ class ProveedorWhatsAppTwilio:
         declarado = respuesta.headers.get("content-length", "")
         if declarado.isdigit() and int(declarado) > max_bytes:
             raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
-        cuerpo = bytearray()
+        limite = self._s.whatsapp_media_duracion_segundos
+        trozos: list[bytes] = []
+        total = 0
         for trozo in respuesta.iter_bytes():
-            cuerpo.extend(trozo)
-            if len(cuerpo) > max_bytes:
+            trozos.append(trozo)
+            total += len(trozo)
+            if total > max_bytes:
                 raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
+            if time.monotonic() - inicio > limite:  # descarga demasiado lenta (slow-loris)
+                raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True)
         tipo = parseo.tipo_contenido_limpio(respuesta.headers.get("content-type"))
-        return tipo, bytes(cuerpo)
+        return tipo, b"".join(trozos)  # una sola copia
+
+
+def _fallo_antes_de_conectar(exc: BaseException) -> bool:
+    """True solo si la causa es un fallo de CONEXIÓN (DNS o rechazo) previo al envío; ante la
+    duda (cortes de lectura, resets, protocolo) es False y se trata como envío incierto."""
+    from urllib3.exceptions import MaxRetryError, NewConnectionError
+
+    causa = exc.args[0] if exc.args else None
+    if isinstance(causa, MaxRetryError):
+        causa = causa.reason
+    return isinstance(causa, NewConnectionError)  # NameResolutionError es subclase
 
 
 def _boton(accion: Any) -> BotonPlantilla:

@@ -34,6 +34,7 @@ _LISTA = r"(?: de (?:mensajes|difusion|contactos))?"
 _PATRONES_WHATSAPP = tuple(
     re.compile(p)
     for p in (
+        r"(?:ya )?no me contacten(?: (?:nunca )?mas)? por (?:whatsapp|este medio|este chat|aqui)",
         rf"(?:ya )?no me {_DEJAR}(?: (?:nunca|ya))?(?: mas)?(?: mensajes| msj| whatsapp)?"
         r"(?: mas)?(?: ya)?",
         rf"(?:quiero|deseo|necesito|solicito|quisiera) {_BAJA}",
@@ -44,9 +45,12 @@ _PATRONES_WHATSAPP = tuple(
         r"(?:quiero|deseo|necesito|quisiera) (?:salir|que me saquen|sacarme) de la lista",
     )
 )
+_MEDIO = r"(?:ningun medio|ningun canal|ninguna via|ningun lado|ninguna parte)"
 _PATRONES_TODOS = tuple(
     re.compile(p)
     for p in (
+        rf"(?:ya )?no me contacten(?: (?:nunca )?mas)? por {_MEDIO}",
+        rf"por {_MEDIO} no me contacten(?: mas)?",
         r"(?:ya )?no me contacten(?: (?:nunca )?mas)?(?: ya)?",
         r"(?:ya )?no me vuelvan a contactar(?: nunca)?",
     )
@@ -133,6 +137,7 @@ def clasificar(
             return "todos"
         if any(p.fullmatch(normalizado) for p in _PATRONES_WHATSAPP):
             return "whatsapp"
-        if any(p.fullmatch(normalizado) for p in _PATRONES_VOZ):
-            return "voz"
+    # "No me llamen" es opt-out de voz aunque haya listas de WhatsApp configuradas.
+    if any(p.fullmatch(normalizado) for p in _PATRONES_VOZ):
+        return "voz"
     return None

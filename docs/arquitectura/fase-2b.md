@@ -1697,3 +1697,46 @@ aprueba y mapea plantillas.
 - Quedan para la migración `0004` solo tablas **nuevas** (`configuracion_ia_campana`, `ofertas_campana`,
   `promesa_cuotas`, `historial_ia`, `acciones_ia`, `uso_ia`, `instrucciones_supervisor`,
   `configuracion_global`), sin alterar tablas de 2B.
+
+---
+
+## 8. Revisión post-revisor 2B (cambios de contrato)
+
+- **B1 — Plantillas y frecuencia (§4.6).** Toda plantilla permitida registra SIEMPRE su
+  `intentos_contacto` (`canal=whatsapp_mensaje`, `iniciado_por=empresa`), también cuando reutiliza una
+  conversación abierta. `conversaciones.intento_contacto_id` solo se fija si la conversación es nueva
+  (o no tenía intento). Así cada plantilla cuenta para `FRECUENCIA_DIA`/`FRECUENCIA_MEDIOS` y la ve la voz.
+- **S1 — Revalidación al enviar (§4.6, trabajo `whatsapp.enviar_mensaje`).** Para plantillas el
+  trabajo revalida exclusión, autorización, plantilla enviable (activa, aprobada, finalidad, mapeo y, en
+  marketing, botón de baja) **y franja/festivo** (`motor.evaluar_horario`). Si ya no se puede, el mensaje
+  queda `fallido` sin llamar al proveedor, con `error_codigo` `CLIENTE_OPT_OUT` (exclusión
+  `solicitud_titular`), `CONTACTO_NO_PERMITIDO` (otra exclusión o sin autorización),
+  `PLANTILLA_NO_ENVIABLE` o `FUERA_DE_FRANJA`, y se emite `conversacion.mensaje` (`accion:"estado"`).
+- **S7 — Auditoría de `conversacion.ver` (§4.8).** `GET /conversaciones/{id}` acepta el parámetro de
+  query opcional `apertura` (booleano, por defecto `false`). **Solo con `apertura=true` se audita
+  `conversacion.ver`.** El frontend debe enviar `GET /api/v1/conversaciones/{id}?apertura=true`
+  **una única vez, al abrir la conversación en la bandeja**, y llamar SIN el parámetro en las
+  recargas, los refrescos por eventos y la reconexión del WebSocket.
+- **S3 — Proxy de medios (§4.11).** Máximo `WHATSAPP_MEDIA_CONCURRENCIA` (4) descargas simultáneas por
+  proceso; excederlo responde `429 DEMASIADAS_DESCARGAS`. Duración total máxima de una descarga:
+  `WHATSAPP_MEDIA_DURACION_SEGUNDOS` (30) → `502 PROVEEDOR_NO_DISPONIBLE`.
+- **S4/S6 — Cola.** Un trabajo agotado por bloqueo caducado también ejecuta el gancho de agotamiento;
+  el worker libera al arrancar sus propios `en_proceso`; el bloqueo se renueva al empezar cada trabajo
+  del lote; los trabajos que vuelven a `pendiente` recuperan su `clave_unica`. `trabajos.purgar` borra
+  además `latidos_worker` con más de 7 días e `eventos_mensaje` sin enlazar con más de
+  `PURGA_EVENTOS_HUERFANOS_DIAS` (7); `GET /supervision/trabajos` solo lista workers con latido de la
+  última hora.
+- **S8.** Sincronizar desactiva (auditoría `whatsapp.plantilla_desactivada`) una plantilla activa que
+  pasa a `marketing` sin botón de baja.
+- **S9.** Opt-out: los patrones de voz ("no me llamen…") están siempre activos aunque haya listas
+  configuradas; "no me contacten más por WhatsApp" → `whatsapp`; "no me contacten por ningún medio" →
+  `todos`.
+- **S10.** Crear una autorización con `otorgada_en` anterior a una revocación por `opt_out` del mismo
+  número y finalidad → `409 AUTORIZACION_REVOCADA_POR_OPT_OUT`; en la importación se omite con la
+  advertencia `AUTORIZACION_REVOCADA_POR_OPT_OUT` (cuenta como `ignoradas`).
+- **S11.** Downgrade de `0003`: borra las exclusiones de canal `whatsapp`, convierte `voz` en `todos`,
+  atribuye las del sistema al primer administrador (o primer usuario) y elimina duplicados; solo si no
+  existe ningún usuario se borran las del sistema.
+- **S2.** `vincular` bloquea `clientes` del candidato antes que la conversación (orden global §3.4).
+- **S12.** Errores de conexión previos al envío (DNS, conexión rechazada) → `CONEXION` transitorio con
+  reintento; el resto sigue siendo `ENVIO_INCIERTO`.

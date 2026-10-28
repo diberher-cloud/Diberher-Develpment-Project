@@ -96,13 +96,27 @@ def listar(
 
 
 @router.get("/{conversacion_id}", response_model=Conversacion)
-def ver(conversacion_id: IdRuta, usuario: Cualquiera, db: Db, reloj: RelojDep) -> Conversacion:
+def ver(
+    conversacion_id: IdRuta,
+    usuario: Cualquiera,
+    db: Db,
+    reloj: RelojDep,
+    apertura: bool = False,
+) -> Conversacion:
+    """`apertura=true` (solo al abrir la conversación en la bandeja) audita `conversacion.ver`;
+    las recargas y los refrescos por eventos no auditan."""
     conv = servicio.cargar(db, conversacion_id)
     servicio.exigir_acceso(conv, usuario)
-    auditoria.registrar(
-        db, "conversacion.ver", usuario.id, "conversacion", conv.id, {"conversacion_id": conv.id}
-    )
-    db.commit()
+    if apertura:
+        auditoria.registrar(
+            db,
+            "conversacion.ver",
+            usuario.id,
+            "conversacion",
+            conv.id,
+            {"conversacion_id": conv.id},
+        )
+        db.commit()
     return _conversacion(db, conv, usuario, reloj())
 
 

@@ -1,6 +1,7 @@
 """Medios entrantes por proxy autenticado, sin almacenar el binario (fase-2b.md §4.11)."""
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -18,6 +19,15 @@ from app.modulos.usuarios.modelos import Usuario
 from app.modulos.whatsapp import medios
 
 logger = logging.getLogger("app")
+_semaforos: dict[int, threading.BoundedSemaphore] = {}
+_candado = threading.Lock()
+
+
+def _semaforo() -> threading.BoundedSemaphore:
+    """Semáforo de descargas simultáneas (por proceso), según `WHATSAPP_MEDIA_CONCURRENCIA`."""
+    n = get_settings().whatsapp_media_concurrencia
+    with _candado:
+        return _semaforos.setdefault(n, threading.BoundedSemaphore(n))
 
 
 @dataclass
@@ -48,6 +58,18 @@ def descargar(
     item = next((x for x in (mensaje.media or []) if x.get("indice") == indice), None)
     if item is None or item.get("categoria") == "no_soportado":
         raise _no_disponible()
+    sem = _semaforo()
+    if not sem.acquire(blocking=False):
+        raise ErrorApp(
+            429, "DEMASIADAS_DESCARGAS", "Hay demasiadas descargas de adjuntos en curso; reintente."
+        )
+    try:
+        return _descargar_con_cupo(db, usuario, conv.id, mensaje, item, indice)
+    finally:
+        sem.release()
+
+
+def _descargar_con_cupo(db, usuario, conv_id, mensaje, item, indice) -> MedioDescargado:
     proveedor = obtener_proveedor_whatsapp()
     url = item.get("url_proveedor", "")
     if not proveedor.url_media_valida(url):
@@ -74,7 +96,7 @@ def descargar(
         usuario.id,
         "mensaje",
         mensaje.id,
-        {"conversacion_id": conv.id, "mensaje_id": mensaje.id, "indice": indice},
+        {"conversacion_id": conv_id, "mensaje_id": mensaje.id, "indice": indice},
     )
     db.commit()
     return MedioDescargado(

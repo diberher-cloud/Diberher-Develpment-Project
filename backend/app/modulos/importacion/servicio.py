@@ -462,11 +462,14 @@ def importar(
                 )
             _guardar(db, campana.id, imp.id, d, existentes, tels_existentes)
             importadas += 1
-            _autorizar(db, d, tipo, imp.id, r.fila, auto)
+            _autorizar(db, d, tipo, imp.id, r.fila, auto, incidencias)
 
         if hay_columnas_auto:
             auto["ignoradas"] = sum(
-                1 for i in incidencias if i.codigo == "AUTORIZACION_WHATSAPP_INVALIDA"
+                1
+                for i in incidencias
+                if i.codigo
+                in ("AUTORIZACION_WHATSAPP_INVALIDA", "AUTORIZACION_REVOCADA_POR_OPT_OUT")
             )
             auditoria.registrar(
                 db,
@@ -546,7 +549,13 @@ def importar(
 
 
 def _autorizar(
-    db: Session, d: FilaValida, tipo: str, importacion_id: int, fila: int, auto: dict[str, int]
+    db: Session,
+    d: FilaValida,
+    tipo: str,
+    importacion_id: int,
+    fila: int,
+    auto: dict[str, int],
+    incidencias: list[Incidencia],
 ) -> None:
     """`si` + fecha: una autorización por móvil; `no`: revoca las vigentes de esos móviles."""
     from app.modulos.whatsapp import servicio_autorizaciones as autorizaciones
@@ -561,7 +570,7 @@ def _autorizar(
             d.fecha_autorizacion_whatsapp, datetime.min.time(), tzinfo=ZoneInfo("America/Bogota")
         )
         for numero in moviles:
-            if autorizaciones.alta_importacion(
+            resultado = autorizaciones.alta_importacion(
                 db,
                 numero=numero,
                 finalidad=tipo,
@@ -569,8 +578,20 @@ def _autorizar(
                 importacion_id=importacion_id,
                 fila=fila,
                 ahora=ahora,
-            ):
+            )
+            if resultado == "creada":
                 auto["creadas"] += 1
+            elif resultado == "revocada_opt_out":
+                incidencias.append(
+                    Incidencia(
+                        fila,
+                        "autoriza_whatsapp",
+                        "AUTORIZACION_REVOCADA_POR_OPT_OUT",
+                        "El titular pidió no recibir mensajes después de esa fecha; se omite.",
+                        "advertencia",
+                    )
+                )
+                auto["ignoradas"] += 1
     else:
         for numero in moviles:
             auto["revocadas"] += autorizaciones.revocar_vigentes(

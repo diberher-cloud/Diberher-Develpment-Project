@@ -1,7 +1,10 @@
 """WhatsApp base y bandeja de chat para agentes humanos (Fase 2B)
 
-El downgrade BORRA las exclusiones con `canal` distinto de `todos` o sin `creado_por` (opt-outs
-de WhatsApp y de sistema): no caben en el esquema de 0002 (UNIQUE sin canal, `creado_por` NOT NULL).
+Downgrade y exclusiones (0002 no tiene `canal`, el UNIQUE no lo incluye y `creado_por` es NOT
+NULL): se BORRAN las de canal `whatsapp` (0002 no usa WhatsApp); las de canal `voz` pasan a
+`todos`; las del sistema (`creado_por` nulo) se atribuyen al primer administrador (o, si no hay,
+al primer usuario) para no volver a contactar a quien pidió no ser contactado; solo si no existe
+ningún usuario se borran. Los duplicados resultantes de (número, aplica_a) se reducen a uno.
 
 Revision ID: 0003
 Revises: 0002
@@ -509,7 +512,23 @@ def downgrade() -> None:
         batch_op.drop_column("conversacion_id")
 
     # Pierde los opt-outs de WhatsApp y los creados por el sistema (ver docstring).
-    op.execute("DELETE FROM exclusiones WHERE canal <> 'todos' OR creado_por IS NULL")
+    op.execute("DELETE FROM exclusiones WHERE canal = 'whatsapp'")
+    op.execute(
+        "DELETE FROM exclusiones WHERE canal = 'voz' AND EXISTS (SELECT 1 FROM exclusiones e2 "
+        "WHERE e2.numero_e164 = exclusiones.numero_e164 AND e2.aplica_a = exclusiones.aplica_a "
+        "AND e2.canal = 'todos')"
+    )
+    op.execute("UPDATE exclusiones SET canal = 'todos' WHERE canal = 'voz'")
+    op.execute(
+        "UPDATE exclusiones SET creado_por = COALESCE("
+        "(SELECT MIN(id) FROM usuarios WHERE rol = 'administrador'), (SELECT MIN(id) FROM usuarios)"
+        ") WHERE creado_por IS NULL"
+    )
+    op.execute("DELETE FROM exclusiones WHERE creado_por IS NULL")  # sin ningún usuario
+    op.execute(
+        "DELETE FROM exclusiones WHERE id NOT IN "
+        "(SELECT MIN(id) FROM exclusiones GROUP BY numero_e164, aplica_a)"
+    )
     with op.batch_alter_table("exclusiones", schema=None) as batch_op:
         batch_op.drop_constraint(
             batch_op.f("ck_exclusiones_usuario_requiere_creador"), type_="check"

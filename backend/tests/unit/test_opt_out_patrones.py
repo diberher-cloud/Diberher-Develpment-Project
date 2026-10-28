@@ -82,3 +82,29 @@ def test_negativos(texto):
 def test_con_listas_configuradas_los_patrones_se_pueden_apagar():
     assert c("ya no me escriban", usar_patrones=False) is None
     assert c("no me escriban", usar_patrones=False) == "whatsapp"  # la lista literal sigue
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("no me contacten más por WhatsApp", "whatsapp"),
+        ("No me contacten por whatsapp", "whatsapp"),
+        ("ya no me contacten por este chat", "whatsapp"),
+        ("no me contacten por ningún medio", "todos"),
+        ("No me contacten más por ningún canal", "todos"),
+        ("por ningún medio no me contacten", "todos"),
+    ],
+)
+def test_s9_contacto_por_canal_o_por_ningun_medio(texto, esperado):
+    assert c(texto) == esperado
+
+
+@pytest.mark.parametrize("texto", ["no me contacten por la tarde", "no me contacten por correo"])
+def test_s9_otras_frases_no_son_opt_out(texto):
+    assert c(texto) is None
+
+
+def test_s9_los_patrones_de_voz_siguen_activos_con_listas_configuradas():
+    assert c("no me llamen", usar_patrones=False) == "voz"
+    assert c("No me llamen más", usar_patrones=False) == "voz"
+    assert c("ya no me escriban", usar_patrones=False) is None  # WhatsApp sí depende de las listas

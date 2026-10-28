@@ -221,6 +221,27 @@ def listar(
     return [a_salida(db, a, usuario) for a in filas], total
 
 
+def revocada_por_opt_out_posterior(
+    db: Session, numero: str, finalidad: str, otorgada_en: datetime
+) -> bool:
+    """¿Hay una revocación por opt-out del mismo número y finalidad posterior al `otorgada_en`?
+    (una autorización antigua importada no puede revivir lo que el titular pidió detener)."""
+    finalidades = ("venta", "cobranza", "todas") if finalidad == "todas" else (finalidad, "todas")
+    return (
+        db.scalar(
+            select(AutorizacionCanal.id)
+            .where(
+                AutorizacionCanal.numero_e164 == numero,
+                AutorizacionCanal.motivo_revocacion == "opt_out",
+                AutorizacionCanal.finalidad.in_(finalidades),
+                AutorizacionCanal.revocada_en > otorgada_en,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def _duplicada() -> ErrorApp:
     return ErrorApp(
         409, "AUTORIZACION_DUPLICADA", "Ya existe una autorización vigente para esa finalidad."
@@ -244,6 +265,12 @@ def _alta(
     clave = clave_vigente(numero, finalidad)
     if db.scalar(select(AutorizacionCanal.id).where(AutorizacionCanal.clave_vigente == clave)):
         raise _duplicada()
+    if revocada_por_opt_out_posterior(db, numero, finalidad, otorgada_en):
+        raise ErrorApp(
+            409,
+            "AUTORIZACION_REVOCADA_POR_OPT_OUT",
+            "El titular pidió no recibir mensajes después de la fecha de esta autorización.",
+        )
     a = AutorizacionCanal(
         numero_e164=numero,
         canal="whatsapp",
@@ -380,11 +407,14 @@ def alta_importacion(
     importacion_id: int,
     fila: int,
     ahora: datetime,
-) -> bool:
-    """Autorización de una fila importada. False si ya había una vigente igual. Sin commit."""
+) -> str:
+    """Autorización de una fila importada. Devuelve `creada`, `duplicada` o `revocada_opt_out`
+    (se omite si el titular hizo opt-out después de la fecha). Sin commit."""
     clave = clave_vigente(numero, finalidad)
     if db.scalar(select(AutorizacionCanal.id).where(AutorizacionCanal.clave_vigente == clave)):
-        return False
+        return "duplicada"
+    if revocada_por_opt_out_posterior(db, numero, finalidad, otorgada_en):
+        return "revocada_opt_out"
     db.add(
         AutorizacionCanal(
             numero_e164=numero,
@@ -398,4 +428,4 @@ def alta_importacion(
             creado_en=ahora,
         )
     )
-    return True
+    return "creada"

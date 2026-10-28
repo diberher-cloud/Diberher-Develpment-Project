@@ -29,6 +29,7 @@ from app.modulos.conversaciones import servicio as conversaciones
 from app.modulos.conversaciones.dueno import Humano, decidir_dueno_inicial
 from app.modulos.conversaciones.esquemas import ResultadoEnvioPlantilla
 from app.modulos.conversaciones.modelos import Conversacion, Mensaje
+from app.modulos.cumplimiento import motor
 from app.modulos.cumplimiento import servicio as cumplimiento
 from app.modulos.usuarios.modelos import Usuario
 from app.modulos.whatsapp import cumplimiento as cumplimiento_wa
@@ -373,7 +374,25 @@ def enviar_plantilla(
                 "El número tiene una conversación abierta de otro registro.",
             ) from None
         conversaciones.publicar_estado(db, conv)
-    elif conv.atendida_por != "humano":
+    else:
+        # Conversación reutilizada: cada plantilla es un contacto de la empresa y cuenta para la
+        # frecuencia (Ley 2300), así que SIEMPRE se registra su intento.
+        intento = cumplimiento.registrar_intento(
+            db,
+            cliente_id=cc.cliente_id,
+            tipo_campana=campana.tipo,
+            canal="whatsapp_mensaje",
+            iniciado_por="empresa",
+            momento=ahora,
+            campana_id=campana.id,
+            campana_cliente_id=cc.id,
+            telefono_id=telefono.id,
+            contacto_directo=False,
+            politica_version=motivos.politica_version,
+        )
+        if conv.intento_contacto_id is None:
+            conv.intento_contacto_id = intento.id
+    if conv.atendida_por != "humano":
         atencion.exigir_capacidad(db, usuario)
         try:
             conversaciones.cambiar_dueno(db, conv, Humano(usuario.id), None, usuario.id, ahora)
@@ -516,6 +535,33 @@ def enviar_plantilla_conversacion(
 
 
 # ---- Trabajo whatsapp.enviar_mensaje -----------------------------------------------------------
+def _revalidar_plantilla(
+    db: Session, conv: Conversacion, m: Mensaje, ahora: datetime
+) -> str | None:
+    """Al ejecutar el trabajo: exclusión, autorización, plantilla enviable y franja/festivo
+    (el trabajo puede ejecutarse horas después de encolarse). Devuelve el código de fallo."""
+    campana = db.get(Campana, conv.campana_id) if conv.campana_id else None
+    if campana is None:
+        return "CONTACTO_NO_PERMITIDO"
+    exc = cumplimiento_wa.exclusion_aplicable(db, conv.numero_cliente_e164, campana.tipo)
+    if exc is not None:
+        return "CLIENTE_OPT_OUT" if exc.motivo == "solicitud_titular" else "CONTACTO_NO_PERMITIDO"
+    if not cumplimiento_wa.autorizacion_vigente(db, conv.numero_cliente_e164, campana.tipo):
+        return "CONTACTO_NO_PERMITIDO"
+    plantilla = db.get(PlantillaWhatsApp, m.plantilla_id) if m.plantilla_id else None
+    if (
+        plantilla is None
+        or not servicio_plantillas.enviable(plantilla)
+        or not servicio_plantillas.compatible_con(plantilla, campana.tipo)
+    ):
+        return "PLANTILLA_NO_ENVIABLE"
+    politica, _ = cumplimiento.cargar_politica(db, campana.tipo)
+    horario = motor.evaluar_horario(
+        ahora, politica, cumplimiento.cargar_festivos(db, ahora, politica)
+    )
+    return None if horario.permitido else "FUERA_DE_FRANJA"
+
+
 def _bloquear_mensaje(db: Session, mensaje_id: int) -> Mensaje | None:
     return db.scalar(
         select(Mensaje)
@@ -580,14 +626,7 @@ def ejecutar_envio(db: Session, payload: dict[str, Any], ahora: datetime) -> Non
                 if isinstance(decision, Rechazar):
                     fallo = "RESPUESTA_FUERA_DE_FRANJA"
     elif m.tipo == "plantilla":
-        campana = db.get(Campana, conv.campana_id) if conv.campana_id else None
-        if (
-            campana is None
-            or cumplimiento_wa.exclusion_aplicable(db, conv.numero_cliente_e164, campana.tipo)
-            is not None
-            or not cumplimiento_wa.autorizacion_vigente(db, conv.numero_cliente_e164, campana.tipo)
-        ):
-            fallo = "CONTACTO_NO_PERMITIDO"
+        fallo = _revalidar_plantilla(db, conv, m, ahora)
     if fallo is not None:
         _fallar(db, conv, m, fallo)
         db.commit()
