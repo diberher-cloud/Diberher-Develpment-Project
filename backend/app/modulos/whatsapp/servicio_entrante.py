@@ -220,9 +220,18 @@ def procesar_entrante(db: Session, payload: dict[str, Any], ahora: datetime) -> 
     # Opt-out determinista: no se encola a nadie.
     frases_wa, frases_todos = _frases()
     alcance = opt_out.clasificar(
-        m.cuerpo, m.boton_payload, frases_wa, frases_todos, settings.whatsapp_payload_baja
+        m.cuerpo,
+        m.boton_payload,
+        frases_wa,
+        frases_todos,
+        settings.whatsapp_payload_baja,
+        usar_patrones=not (
+            settings.whatsapp_frases_opt_out or settings.whatsapp_frases_opt_out_todos
+        ),
     )
-    if alcance is not None:
+    if alcance == "voz":  # solo deja de recibir llamadas; la conversación sigue su curso
+        servicio_autorizaciones.aplicar_opt_out_voz(db, conv, ahora)
+    elif alcance is not None:
         servicio_autorizaciones.aplicar_opt_out(
             db, conv, alcance, origen="determinista", usuario_id=None, ahora=ahora
         )

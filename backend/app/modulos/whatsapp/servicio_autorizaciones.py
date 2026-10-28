@@ -51,7 +51,7 @@ def revocar_vigentes(
 
 
 def _exclusion_equivalente(db: Session, numero: str, alcance: str) -> bool:
-    canales = ("todos",) if alcance == "todos" else ("todos", "whatsapp")
+    canales = ("todos",) if alcance == "todos" else ("todos", alcance)
     return (
         db.scalar(
             select(Exclusion.id)
@@ -126,6 +126,38 @@ def aplicar_opt_out(
         "conversacion",
         conv.id,
         {"conversacion_id": conv.id, "alcance": alcance, "origen": origen},
+    )
+
+
+def aplicar_opt_out_voz(db: Session, conv: Conversacion, ahora: datetime) -> None:
+    """ "No me llamen": exclusión del canal voz. No cierra la conversación de WhatsApp ni revoca
+    las autorizaciones de WhatsApp (el titular sigue pudiendo escribir). Sin commit."""
+    numero = conv.numero_cliente_e164
+    if not _exclusion_equivalente(db, numero, "voz"):
+        try:
+            with db.begin_nested():
+                db.add(
+                    Exclusion(
+                        numero_e164=numero,
+                        motivo="solicitud_titular",
+                        aplica_a="todas",
+                        canal="voz",
+                        origen="sistema",
+                        creado_por=None,
+                        conversacion_id=conv.id,
+                        creado_en=ahora,
+                    )
+                )
+                db.flush()
+        except IntegrityError:
+            pass
+    auditoria.registrar(
+        db,
+        "whatsapp.opt_out",
+        None,
+        "conversacion",
+        conv.id,
+        {"conversacion_id": conv.id, "alcance": "voz", "origen": "determinista"},
     )
 
 

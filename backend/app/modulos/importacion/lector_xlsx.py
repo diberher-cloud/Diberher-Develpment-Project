@@ -14,6 +14,7 @@ from typing import Any
 
 from app.modulos.importacion.lector_csv import ArchivoCsv, ErrorLector, FilaCsv
 from app.modulos.importacion.normalizacion import normalizar_cabecera
+from app.saneamiento import limpiar
 
 MAX_DESCOMPRIMIDO_DEFECTO = 100 * 1024 * 1024
 _MENSAJE = "No se pudo leer el archivo Excel."
@@ -45,7 +46,7 @@ def celda_a_texto(valor: Any) -> str:
         return valor.isoformat()
     if isinstance(valor, time):
         return valor.isoformat()
-    return str(valor).strip()
+    return limpiar(str(valor)).strip()
 
 
 def _verificar_zip(datos: bytes, max_descomprimido: int) -> None:

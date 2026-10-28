@@ -8,7 +8,7 @@ import re
 import unicodedata
 from typing import Literal
 
-AlcanceOptOut = Literal["whatsapp", "todos"]
+AlcanceOptOut = Literal["whatsapp", "todos", "voz"]
 MAX_CARACTERES = 80
 
 FRASES_WHATSAPP = (
@@ -24,6 +24,41 @@ FRASES_TODOS = (
     "no me llamen ni me escriban mas",
 )  # fmt: skip
 
+# Patrones sobre el texto YA normalizado (minúsculas, sin tildes ni signos), con coincidencia
+# COMPLETA (`fullmatch`): "no me escriban más tarde" o "no me contacten hasta el lunes"
+# no coinciden.
+_DEJAR = r"(?:escriban|escribas|escriba|manden|mandes|envien|envies|envie|mande)"
+_BAJA = r"(?:que me (?:den|de|dan) de baja|darme de baja|dar de baja)"
+_PODER = r"(?:pueden|podrian|podria|puede|podrias|puedes|pueda)"
+_LISTA = r"(?: de (?:mensajes|difusion|contactos))?"
+_PATRONES_WHATSAPP = tuple(
+    re.compile(p)
+    for p in (
+        rf"(?:ya )?no me {_DEJAR}(?: (?:nunca|ya))?(?: mas)?(?: mensajes| msj| whatsapp)?"
+        r"(?: mas)?(?: ya)?",
+        rf"(?:quiero|deseo|necesito|solicito|quisiera) {_BAJA}",
+        rf"(?:me )?{_PODER} (?:me )?dar(?:me)? de baja",
+        r"(?:por favor )?(?:den|dar|denme|deme|dame) de baja",
+        r"stop ?all",
+        rf"(?:por favor )?(?:saquenme|sacame|saqueme|sacarme) de la lista{_LISTA}",
+        r"(?:quiero|deseo|necesito|quisiera) (?:salir|que me saquen|sacarme) de la lista",
+    )
+)
+_PATRONES_TODOS = tuple(
+    re.compile(p)
+    for p in (
+        r"(?:ya )?no me contacten(?: (?:nunca )?mas)?(?: ya)?",
+        r"(?:ya )?no me vuelvan a contactar(?: nunca)?",
+    )
+)
+_PATRONES_VOZ = tuple(
+    re.compile(p)
+    for p in (
+        r"(?:ya )?no me llamen(?: (?:nunca )?mas)?(?: ya)?",
+        r"(?:ya )?no me vuelvan a llamar(?: nunca)?",
+        r"(?:ya )?no me llamen mas por telefono",
+    )
+)
 _NO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 # Ordenados de mayor a menor longitud: "buenas tardes" antes que "buenas".
 _PREFIJOS = tuple(
@@ -80,6 +115,7 @@ def clasificar(
     frases_whatsapp: frozenset[str],
     frases_todos: frozenset[str],
     payload_baja: str,
+    usar_patrones: bool = True,
 ) -> AlcanceOptOut | None:
     if boton_payload is not None and boton_payload == payload_baja:
         return "whatsapp"
@@ -92,4 +128,11 @@ def clasificar(
         return "todos"
     if normalizado in frases_whatsapp:
         return "whatsapp"
+    if usar_patrones:
+        if any(p.fullmatch(normalizado) for p in _PATRONES_TODOS):
+            return "todos"
+        if any(p.fullmatch(normalizado) for p in _PATRONES_WHATSAPP):
+            return "whatsapp"
+        if any(p.fullmatch(normalizado) for p in _PATRONES_VOZ):
+            return "voz"
     return None

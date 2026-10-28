@@ -1,10 +1,15 @@
-"""Filtro de logging que enmascara credenciales en URLs (`token=`, `ticket=`) — defensa en
+"""Filtro de logging que enmascara credenciales y datos personales en URLs (`token=`,
+`ticket=`, `numero=`, `q=`...) — defensa en
 profundidad: el WebSocket ya no recibe el JWT, pero un cliente antiguo podría enviarlo."""
 
 import logging
 import re
 
-_PATRON = re.compile(r"(?i)\b(token|ticket|access_token)=[^&\s\"']+")
+# Credenciales y parámetros de query con datos personales (la query aparece en el log de acceso).
+_PATRON = re.compile(
+    r"(?i)\b(token|ticket|access_token|numero|telefono|q|documento|numero_documento|email)"
+    r"=[^&\s\"']+"
+)
 
 
 class MascaraCredencialesFilter(logging.Filter):

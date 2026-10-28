@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     whatsapp_margen_ventana_segundos: int = 60
     whatsapp_media_max_bytes: int = 16 * 1024 * 1024
     whatsapp_dias_resolucion_plantilla: int = 30
+    # Hosts a los que se puede seguir una redirección al descargar medios (https, sin credenciales).
+    # api.twilio.com siempre está permitido. Separados por comas.
+    whatsapp_hosts_medios: str = "media.twiliocdn.com"
     whatsapp_payload_baja: str = "BAJA"
     whatsapp_frases_opt_out: str = ""
     whatsapp_frases_opt_out_todos: str = ""
@@ -128,6 +131,11 @@ class Settings(BaseSettings):
         if self.entorno == "produccion":
             if not self.public_base_url.startswith("https://"):
                 raise ValueError("PUBLIC_BASE_URL debe usar https:// en producción.")
+
+    @property
+    def hosts_medios(self) -> frozenset[str]:
+        extra = {h.strip().lower() for h in self.whatsapp_hosts_medios.split(",") if h.strip()}
+        return frozenset({"api.twilio.com", *extra})
 
     def _validar_whatsapp(self) -> None:
         if not _E164.fullmatch(self.whatsapp_numero_empresa):

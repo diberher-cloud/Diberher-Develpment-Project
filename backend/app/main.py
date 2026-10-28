@@ -5,7 +5,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import (
@@ -32,6 +32,7 @@ from app.modulos.usuarios.router import router as usuarios_router
 from app.modulos.whatsapp.router import router as whatsapp_router
 from app.modulos.whatsapp.router import router_autorizaciones
 from app.modulos.whatsapp.router_simulacion import router as whatsapp_simulacion_router
+from app.saneamiento import rechazar_texto_hostil
 from app.tiempo_real import bus
 from app.tiempo_real.conexiones import gestor
 from app.tiempo_real.router import router as ws_router
@@ -78,7 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     registrar_manejadores(app)
 
-    api = APIRouter(prefix="/api/v1")
+    api = APIRouter(prefix="/api/v1", dependencies=[Depends(rechazar_texto_hostil)])
 
     @api.get("/salud", tags=["salud"])
     def salud() -> dict[str, str]:

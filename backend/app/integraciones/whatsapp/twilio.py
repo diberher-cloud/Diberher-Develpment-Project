@@ -3,8 +3,10 @@ medios entrantes (Basic Auth con la API Key, límite de bytes, sin reenviar cred
 orígenes)."""
 
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -20,6 +22,9 @@ from app.integraciones.whatsapp.proveedor import (
     PlantillaRemota,
 )
 
+_CONTROL = re.compile(r"[\x00-\x20\x7f-\x9f\\]")
+_REDIRECCIONES = (301, 302, 303, 307, 308)
+MAX_SALTOS = 2
 _TIPOS_CON_CUERPO = ("twilio/text", "twilio/quick-reply", "twilio/call-to-action", "twilio/card")
 _APROBACION = {
     "approved": "aprobada",
@@ -177,44 +182,94 @@ class ProveedorWhatsAppTwilio:
 
     # ---- medios ------------------------------------------------------------------------
     def url_media_valida(self, url: str) -> bool:
-        """Anti-SSRF: solo el prefijo de mensajes de la cuenta configurada."""
-        if not self._s.twilio_account_sid:
+        """Anti-SSRF: https, host `api.twilio.com` sin puerto ni credenciales y ruta EXACTA
+        `/2010-04-01/Accounts/<SID propio>/Messages/MM…[/Media/ME…]` (sin `.`/`..`, sin
+        codificaciones, sin query ni fragmento, sin caracteres de control)."""
+        sid = self._s.twilio_account_sid
+        if not sid or not url.startswith("https://api.twilio.com/") or _CONTROL.search(url):
             return False
-        return url.startswith(
-            f"https://api.twilio.com/2010-04-01/Accounts/{self._s.twilio_account_sid}/Messages/"
+        try:
+            partes = urlsplit(url)
+            puerto = partes.port
+        except ValueError:
+            return False
+        if partes.netloc != "api.twilio.com" or puerto is not None:
+            return False
+        if partes.query or partes.fragment:
+            return False
+        patron = (
+            rf"/2010-04-01/Accounts/{re.escape(sid)}/Messages/MM[A-Za-z0-9]+"
+            r"(?:/Media/ME[A-Za-z0-9]+)?"
         )
+        return re.fullmatch(patron, partes.path) is not None
+
+    def _redireccion_permitida(self, destino: str) -> bool:
+        """Solo https hacia hosts de la lista de medios (`WHATSAPP_HOSTS_MEDIOS`) o la propia
+        ruta válida de `api.twilio.com`; sin credenciales, puertos ni caracteres de control."""
+        if _CONTROL.search(destino) or not destino.startswith("https://"):
+            return False
+        try:
+            partes = urlsplit(destino)
+            puerto = partes.port
+        except ValueError:
+            return False
+        if puerto is not None or "@" in partes.netloc or partes.hostname is None:
+            return False
+        if partes.hostname == "api.twilio.com":
+            return self.url_media_valida(destino)
+        return partes.hostname.lower() in self._s.hosts_medios
 
     def descargar_media(self, url: str, max_bytes: int) -> tuple[str, bytes]:
         if not self.url_media_valida(url):
             raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
+        credenciales: tuple[str, str] | None = (
+            self._s.twilio_api_key_sid,
+            self._s.twilio_api_key_secret,
+        )
+        actual = url
         try:
-            with (
-                httpx.Client(
-                    timeout=httpx.Timeout(10, connect=5),
-                    follow_redirects=True,
-                    auth=(self._s.twilio_api_key_sid, self._s.twilio_api_key_secret),
-                    transport=self._transporte_http,
-                ) as cliente,
-                cliente.stream("GET", url) as respuesta,
-            ):
-                if respuesta.status_code in (404, 410):
-                    raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
-                if respuesta.status_code == 429 or respuesta.status_code >= 500:
-                    raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True)
-                if respuesta.status_code != 200:
-                    raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=False)
-                declarado = respuesta.headers.get("content-length", "")
-                if declarado.isdigit() and int(declarado) > max_bytes:
-                    raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
-                cuerpo = bytearray()
-                for trozo in respuesta.iter_bytes():
-                    cuerpo.extend(trozo)
-                    if len(cuerpo) > max_bytes:
-                        raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
-                tipo = parseo.tipo_contenido_limpio(respuesta.headers.get("content-type"))
-                return tipo, bytes(cuerpo)
+            # Sin redirecciones automáticas: cada salto se valida a mano (máx. `MAX_SALTOS`) y
+            # las credenciales solo viajan a la ruta válida de api.twilio.com.
+            with httpx.Client(
+                timeout=httpx.Timeout(10, connect=5),
+                follow_redirects=False,
+                transport=self._transporte_http,
+            ) as cliente:
+                for salto in range(MAX_SALTOS + 1):
+                    with cliente.stream("GET", actual, auth=credenciales) as respuesta:
+                        if respuesta.status_code in _REDIRECCIONES:
+                            destino = urljoin(actual, respuesta.headers.get("location", ""))
+                            if salto == MAX_SALTOS or not self._redireccion_permitida(destino):
+                                raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", False)
+                            actual = destino
+                            if not self.url_media_valida(destino):
+                                credenciales = None
+                            continue
+                        return self._leer(respuesta, max_bytes)
+        except (httpx.InvalidURL, httpx.UnsupportedProtocol):
+            raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False) from None
         except httpx.HTTPError:
             raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True) from None
+        raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
+
+    @staticmethod
+    def _leer(respuesta: httpx.Response, max_bytes: int) -> tuple[str, bytes]:
+        if respuesta.status_code in (404, 410):
+            raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
+        if respuesta.status_code == 429 or respuesta.status_code >= 500:
+            raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True)
+        if respuesta.status_code != 200:
+            raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=False)
+        declarado = respuesta.headers.get("content-length", "")
+        if declarado.isdigit() and int(declarado) > max_bytes:
+            raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
+        cuerpo = bytearray()
+        for trozo in respuesta.iter_bytes():
+            cuerpo.extend(trozo)
+            if len(cuerpo) > max_bytes:
+                raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
+        tipo = parseo.tipo_contenido_limpio(respuesta.headers.get("content-type"))
+        return tipo, bytes(cuerpo)
 
 
 def _boton(accion: Any) -> BotonPlantilla:

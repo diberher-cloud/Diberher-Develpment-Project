@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Literal
 
 from app.integraciones.whatsapp.proveedor import EstadoMensaje, MediaEntrante, MensajeEntrante
+from app.saneamiento import limpiar
 
 PREFIJO = "whatsapp:"
 MAX_TEXTO = 4096
@@ -34,18 +35,18 @@ def numero_whatsapp(valor: str | None) -> str | None:
 
 def tipo_contenido_limpio(valor: str | None) -> str:
     """Minúsculas y sin parámetros (`audio/ogg; codecs=opus` → `audio/ogg`)."""
-    return (valor or "").split(";", 1)[0].strip().lower()[:100]
+    return limpiar(valor or "").split(";", 1)[0].strip().lower()[:100]
 
 
 def _opcional(valor: str | None, maximo: int) -> str | None:
     if valor is None:
         return None
-    valor = valor.strip()
+    valor = limpiar(valor).strip()
     return valor[:maximo] if valor else None
 
 
 def parsear_entrante(params: Mapping[str, str]) -> MensajeEntrante | None:
-    sid = (params.get("MessageSid") or "").strip()
+    sid = limpiar(params.get("MessageSid") or "").strip()
     cliente = numero_whatsapp(params.get("From"))
     empresa = numero_whatsapp(params.get("To"))
     if not sid or len(sid) > 64 or cliente is None or empresa is None:
@@ -55,14 +56,14 @@ def parsear_entrante(params: Mapping[str, str]) -> MensajeEntrante | None:
         return None
     media = []
     for i in range(int(crudo)):
-        url = (params.get(f"MediaUrl{i}") or "").strip()
+        url = limpiar(params.get(f"MediaUrl{i}") or "").strip()
         if url:
             media.append(
                 MediaEntrante(
                     i, url[:500], tipo_contenido_limpio(params.get(f"MediaContentType{i}"))
                 )
             )
-    cuerpo = params.get("Body")
+    cuerpo = limpiar(params["Body"]) if params.get("Body") else None
     return MensajeEntrante(
         proveedor_id=sid,
         numero_cliente=cliente,
@@ -78,8 +79,8 @@ def parsear_entrante(params: Mapping[str, str]) -> MensajeEntrante | None:
 
 
 def parsear_estado(params: Mapping[str, str]) -> EstadoMensaje | None:
-    sid = (params.get("MessageSid") or "").strip()
-    crudo = (params.get("MessageStatus") or "").strip().lower()
+    sid = limpiar(params.get("MessageSid") or "").strip()
+    crudo = limpiar(params.get("MessageStatus") or "").strip().lower()
     if not sid or len(sid) > 64 or not crudo:
         return None
     return EstadoMensaje(
