@@ -20,6 +20,8 @@ from app.modulos.campanas.router import router as campanas_router
 from app.modulos.clientes.router import router as clientes_router
 from app.modulos.consola.router import router as consola_router
 from app.modulos.consola.router import router_campana as tipificaciones_router
+from app.modulos.conversaciones.router import router as conversaciones_router
+from app.modulos.conversaciones.router import router_atencion
 from app.modulos.cumplimiento.router import router as cumplimiento_router
 from app.modulos.exclusiones.router import router as exclusiones_router
 from app.modulos.importacion.router import router as importacion_router
@@ -27,6 +29,9 @@ from app.modulos.supervision.router import router as supervision_router
 from app.modulos.telefonia.router import router as telefonia_router
 from app.modulos.telefonia.router_simulacion import router as simulacion_router
 from app.modulos.usuarios.router import router as usuarios_router
+from app.modulos.whatsapp.router import router as whatsapp_router
+from app.modulos.whatsapp.router import router_autorizaciones
+from app.modulos.whatsapp.router_simulacion import router as whatsapp_simulacion_router
 from app.tiempo_real import bus
 from app.tiempo_real.conexiones import gestor
 from app.tiempo_real.router import router as ws_router
@@ -90,11 +95,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         consola_router,
         tipificaciones_router,
         telefonia_router,
+        whatsapp_router,
+        router_autorizaciones,
+        conversaciones_router,
+        router_atencion,
         supervision_router,
         ws_router,
     ]
     if settings.telefonia_proveedor == "falso" and settings.entorno != "produccion":
         routers.append(simulacion_router)
+    if settings.whatsapp_proveedor == "falso" and settings.entorno != "produccion":
+        routers.append(whatsapp_simulacion_router)
     for router in routers:
         api.include_router(router)
     app.include_router(api)

@@ -56,6 +56,35 @@ class Settings(BaseSettings):
     ws_revalidar_segundos: float = 60
     bus_eventos: Literal["auto", "memoria", "postgres"] = "auto"
 
+    # WhatsApp (Fase 2B)
+    whatsapp_proveedor: Literal["falso", "twilio"] = "falso"
+    whatsapp_numero_empresa: str = "+573000000001"
+    whatsapp_margen_ventana_segundos: int = 60
+    whatsapp_media_max_bytes: int = 16 * 1024 * 1024
+    whatsapp_dias_resolucion_plantilla: int = 30
+    whatsapp_payload_baja: str = "BAJA"
+    whatsapp_frases_opt_out: str = ""
+    whatsapp_frases_opt_out_todos: str = ""
+    whatsapp_mensaje_opt_out: str = (
+        "Hemos registrado su solicitud. No le enviaremos más mensajes por WhatsApp."
+    )
+    whatsapp_mensaje_opt_out_todos: str = (
+        "Hemos registrado su solicitud. No volveremos a contactarle por ningún medio."
+    )
+    whatsapp_mensaje_espera: str = (
+        "Gracias por escribirnos. Un asesor le responderá en nuestro horario de atención."
+    )
+    whatsapp_mensaje_fuera_de_franja: str = (
+        "Recibimos su mensaje. Le responderemos dentro de nuestro horario de atención."
+    )
+    conversacion_inactividad_horas: int = 24
+    atencion_max_conversaciones_agente: int = 5
+
+    # Worker (Fase 2B)
+    worker_intervalo_segundos: float = 1
+    worker_lote: int = 10
+    worker_bloqueo_segundos: int = 300
+
     @model_validator(mode="after")
     def _validar_secreto(self) -> "Settings":
         if self.entorno != "test" and len(self.jwt_secreto) < 32:
@@ -65,6 +94,7 @@ class Settings(BaseSettings):
         if self.entorno == "test" and not self.jwt_secreto:
             self.jwt_secreto = "secreto-solo-para-tests-0123456789abcdef"
         self._validar_telefonia()
+        self._validar_whatsapp()
         return self
 
     def _validar_telefonia(self) -> None:
@@ -98,6 +128,48 @@ class Settings(BaseSettings):
         if self.entorno == "produccion":
             if not self.public_base_url.startswith("https://"):
                 raise ValueError("PUBLIC_BASE_URL debe usar https:// en producción.")
+
+    def _validar_whatsapp(self) -> None:
+        if not _E164.fullmatch(self.whatsapp_numero_empresa):
+            raise ValueError("WHATSAPP_NUMERO_EMPRESA debe estar en formato E.164 (+57...).")
+        if self.whatsapp_proveedor == "twilio":
+            faltan = [
+                nombre.upper()
+                for nombre in (
+                    "twilio_account_sid",
+                    "twilio_auth_token",
+                    "twilio_api_key_sid",
+                    "twilio_api_key_secret",
+                    "public_base_url",
+                )
+                if not getattr(self, nombre)
+            ]
+            if faltan:
+                raise ValueError("WHATSAPP_PROVEEDOR=twilio exige: " + ", ".join(faltan) + ".")
+            if self.entorno != "test" and not self.public_base_url.startswith("https://"):
+                raise ValueError("PUBLIC_BASE_URL debe usar https:// con el proveedor twilio.")
+        rangos = (
+            ("WHATSAPP_MARGEN_VENTANA_SEGUNDOS", self.whatsapp_margen_ventana_segundos, 0, 3600),
+            ("WHATSAPP_MEDIA_MAX_BYTES", self.whatsapp_media_max_bytes, 1024, 64 * 1024 * 1024),
+            ("WHATSAPP_DIAS_RESOLUCION_PLANTILLA", self.whatsapp_dias_resolucion_plantilla, 1, 365),
+            ("CONVERSACION_INACTIVIDAD_HORAS", self.conversacion_inactividad_horas, 1, 168),
+            ("ATENCION_MAX_CONVERSACIONES_AGENTE", self.atencion_max_conversaciones_agente, 1, 50),
+            ("WORKER_INTERVALO_SEGUNDOS", self.worker_intervalo_segundos, 0.1, 60),
+            ("WORKER_LOTE", self.worker_lote, 1, 100),
+            ("WORKER_BLOQUEO_SEGUNDOS", self.worker_bloqueo_segundos, 30, 3600),
+        )
+        for nombre, valor, minimo, maximo in rangos:
+            if not minimo <= valor <= maximo:
+                raise ValueError(f"{nombre} debe estar entre {minimo} y {maximo}.")
+        mensajes = (
+            ("WHATSAPP_MENSAJE_OPT_OUT", self.whatsapp_mensaje_opt_out),
+            ("WHATSAPP_MENSAJE_OPT_OUT_TODOS", self.whatsapp_mensaje_opt_out_todos),
+            ("WHATSAPP_MENSAJE_ESPERA", self.whatsapp_mensaje_espera),
+            ("WHATSAPP_MENSAJE_FUERA_DE_FRANJA", self.whatsapp_mensaje_fuera_de_franja),
+        )
+        for nombre, texto in mensajes:
+            if len(texto) > 1000:
+                raise ValueError(f"{nombre} no puede superar 1000 caracteres.")
 
     @property
     def lista_cors(self) -> list[str]:

@@ -9,6 +9,7 @@ from typing import Any
 logger = logging.getLogger("app")
 
 TIPOS_DE_AGENTE = {"agente.estado", "llamada.estado"}
+TIPOS_DE_CONVERSACION = {"conversacion.mensaje", "conversacion.estado"}
 MAX_COLA = 1000
 
 
@@ -31,12 +32,19 @@ class Conexion:
 
 
 def debe_recibir(conexion: Conexion, evento: dict[str, Any]) -> bool:
-    """Administrador/supervisor reciben todo; el agente, lo propio y los `consola.registro`."""
+    """Administrador/supervisor reciben todo; el agente, lo propio, los `consola.registro` y los
+    `atencion.cola` (solo ids); `trabajo.fallido` nunca llega al agente."""
     if conexion.rol in ("administrador", "supervisor"):
         return True
     tipo = evento.get("tipo")
-    if tipo == "consola.registro":
+    if tipo in ("consola.registro", "atencion.cola"):
         return True
+    if tipo in TIPOS_DE_CONVERSACION:
+        datos = evento.get("datos", {})
+        return conexion.usuario_id in (
+            datos.get("usuario_asignado_id"),
+            datos.get("usuario_anterior_id"),
+        )
     if tipo in TIPOS_DE_AGENTE:
         return evento.get("datos", {}).get("usuario_id") == conexion.usuario_id
     return False

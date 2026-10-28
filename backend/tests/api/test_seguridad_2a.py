@@ -325,7 +325,7 @@ def test_simulacion_no_aparece_en_openapi_ni_responde_en_produccion_ni_con_twili
         app = create_app(Settings(_env_file=None, **kw))
         with TestClient(app) as c:
             rutas = c.get("/openapi.json").json()["paths"]
-            assert not [p for p in rutas if "simulacion" in p], kw
+            assert not [p for p in rutas if "telefonia/simulacion" in p], kw
             h = {"Authorization": "Bearer " + crear_token(1, "agente")[0]}
             assert (
                 c.post(

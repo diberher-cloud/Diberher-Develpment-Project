@@ -1,6 +1,16 @@
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, FechaHoraUTC, ahora_utc
@@ -33,6 +43,12 @@ class Campana(Base):
     max_intentos: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     intervalo_reintento_minutos: Mapped[int] = mapped_column(
         Integer, default=60, server_default="60"
+    )
+    whatsapp_habilitado: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    plantilla_inicial_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plantillas_whatsapp.id"), nullable=True
     )
     creado_por: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     creado_en: Mapped[datetime] = mapped_column(FechaHoraUTC, default=ahora_utc)

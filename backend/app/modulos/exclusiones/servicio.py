@@ -31,6 +31,7 @@ def listar(
     q: str | None,
     motivo: str | None,
     aplica_a: str | None,
+    canal: str | None = None,
 ) -> tuple[list[Exclusion], int]:
     consulta = select(Exclusion)
     if q and q.strip():
@@ -42,6 +43,8 @@ def listar(
         consulta = consulta.where(Exclusion.motivo == motivo)
     if aplica_a:
         consulta = consulta.where(Exclusion.aplica_a == aplica_a)
+    if canal:
+        consulta = consulta.where(Exclusion.canal == canal)
     return paginar(db, consulta.order_by(Exclusion.id.desc()), params)
 
 
@@ -52,16 +55,22 @@ def crear(db: Session, datos: ExclusionCrear, usuario: Usuario) -> Exclusion:
         raise _error_telefono(exc) from exc
     aplica_a = resolver_aplica_a(datos.motivo, datos.aplica_a)
     duplicada = ErrorApp(
-        409, "EXCLUSION_DUPLICADA", "El número ya está excluido para esa finalidad."
+        409, "EXCLUSION_DUPLICADA", "El número ya está excluido para esa finalidad y canal."
     )
     if db.scalar(
-        select(Exclusion.id).where(Exclusion.numero_e164 == numero, Exclusion.aplica_a == aplica_a)
+        select(Exclusion.id).where(
+            Exclusion.numero_e164 == numero,
+            Exclusion.aplica_a == aplica_a,
+            Exclusion.canal == datos.canal,
+        )
     ):
         raise duplicada
     exclusion = Exclusion(
         numero_e164=numero,
         motivo=datos.motivo,
         aplica_a=aplica_a,
+        canal=datos.canal,
+        origen="usuario",
         observacion=(datos.observacion or None),
         creado_por=usuario.id,
     )
@@ -73,7 +82,7 @@ def crear(db: Session, datos: ExclusionCrear, usuario: Usuario) -> Exclusion:
         raise duplicada from exc
     auditoria.registrar(
         db, "exclusion.crear", usuario.id, "exclusion", exclusion.id,
-        {"motivo": datos.motivo, "aplica_a": aplica_a},
+        {"motivo": datos.motivo, "aplica_a": aplica_a, "canal": datos.canal},
     )  # fmt: skip
     db.commit()
     return exclusion
@@ -83,7 +92,11 @@ def eliminar(db: Session, exclusion_id: int, usuario: Usuario) -> None:
     exclusion = db.get(Exclusion, exclusion_id)
     if exclusion is None:
         raise ErrorApp(404, "NO_ENCONTRADO", "Exclusión no encontrada.")
-    detalle_aud = {"motivo": exclusion.motivo, "aplica_a": exclusion.aplica_a}
+    detalle_aud = {
+        "motivo": exclusion.motivo,
+        "aplica_a": exclusion.aplica_a,
+        "canal": exclusion.canal,
+    }
     db.delete(exclusion)
     auditoria.registrar(
         db, "exclusion.eliminar", usuario.id, "exclusion", exclusion_id, detalle_aud
@@ -98,6 +111,7 @@ def importar(
     motivo: str,
     aplica_a_in: str | None,
     nombre_archivo: str = "exclusiones.csv",
+    canal: str = "todos",
 ) -> dict:
     aplica_a = resolver_aplica_a(motivo, aplica_a_in)
     try:
@@ -109,7 +123,11 @@ def importar(
 
     try:
         existentes = set(
-            db.scalars(select(Exclusion.numero_e164).where(Exclusion.aplica_a == aplica_a))
+            db.scalars(
+                select(Exclusion.numero_e164).where(
+                    Exclusion.aplica_a == aplica_a, Exclusion.canal == canal
+                )
+            )
         )
         nuevas: list[Exclusion] = []
         errores: list[dict] = []
@@ -150,7 +168,12 @@ def importar(
             existentes.add(numero)
             nuevas.append(
                 Exclusion(
-                    numero_e164=numero, motivo=motivo, aplica_a=aplica_a, creado_por=usuario.id
+                    numero_e164=numero,
+                    motivo=motivo,
+                    aplica_a=aplica_a,
+                    canal=canal,
+                    origen="usuario",
+                    creado_por=usuario.id,
                 )
             )
         db.add_all(nuevas)
@@ -159,6 +182,7 @@ def importar(
             {
                 "motivo": motivo,
                 "aplica_a": aplica_a,
+                "canal": canal,
                 "total_filas": len(archivo.filas),
                 "creadas": len(nuevas),
                 "duplicadas": duplicadas,

@@ -70,3 +70,74 @@ def listar_agentes(db: Session, ahora: datetime) -> list[AgenteSupervision]:
         )
         for u, e in agentes
     ]
+
+
+# ---- Estado de la cola de trabajos y del worker (fase-2b.md §4.7) --------------------------------
+LATIDO_ACTIVO_SEGUNDOS = 60
+
+
+class TrabajadorEstado(BaseModel):
+    trabajador: str
+    ultimo_latido: FechaHoraZ
+    activo: bool
+
+
+class TrabajosPorEstado(BaseModel):
+    tipo: str
+    estado: str
+    total: int
+
+
+class TrabajoFallido(BaseModel):
+    id: int
+    tipo: str
+    ultimo_error: str | None
+    intentos: int
+    actualizado_en: FechaHoraZ
+
+
+class EstadoTrabajos(BaseModel):
+    trabajadores: list[TrabajadorEstado]
+    por_estado: list[TrabajosPorEstado]
+    fallidos_recientes: list[TrabajoFallido]
+
+
+def estado_trabajos(db: Session, ahora: datetime) -> EstadoTrabajos:
+    from datetime import timedelta
+
+    from app.trabajos.modelos import LatidoWorker, Trabajo
+
+    activo_desde = ahora - timedelta(seconds=LATIDO_ACTIVO_SEGUNDOS)
+    latidos = db.scalars(select(LatidoWorker).order_by(LatidoWorker.trabajador))
+    grupos = db.execute(
+        select(Trabajo.tipo, Trabajo.estado, func.count(Trabajo.id))
+        .group_by(Trabajo.tipo, Trabajo.estado)
+        .order_by(Trabajo.tipo, Trabajo.estado)
+    )
+    fallidos = db.scalars(
+        select(Trabajo)
+        .where(Trabajo.estado == "fallido", Trabajo.actualizado_en >= ahora - timedelta(hours=24))
+        .order_by(Trabajo.actualizado_en.desc(), Trabajo.id.desc())
+        .limit(20)
+    )
+    return EstadoTrabajos(
+        trabajadores=[
+            TrabajadorEstado(
+                trabajador=latido.trabajador,
+                ultimo_latido=latido.ultimo_latido,
+                activo=latido.ultimo_latido >= activo_desde,
+            )
+            for latido in latidos
+        ],
+        por_estado=[TrabajosPorEstado(tipo=t, estado=e, total=n) for t, e, n in grupos],
+        fallidos_recientes=[
+            TrabajoFallido(
+                id=t.id,
+                tipo=t.tipo,
+                ultimo_error=t.ultimo_error,
+                intentos=t.intentos,
+                actualizado_en=t.actualizado_en,
+            )
+            for t in fallidos
+        ],
+    )

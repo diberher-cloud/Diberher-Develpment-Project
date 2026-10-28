@@ -99,9 +99,36 @@ def _duplicado() -> ErrorApp:
     return ErrorApp(409, "NOMBRE_DUPLICADO", "Ya existe una campaña con ese nombre.")
 
 
+def _validar_plantilla_inicial(db: Session, plantilla_id: int | None, tipo: str) -> None:
+    """La plantilla sugerida debe ser enviable y compatible con el tipo de la campaña."""
+    if plantilla_id is None:
+        return
+    from app.modulos.whatsapp import servicio_plantillas
+    from app.modulos.whatsapp.modelos import PlantillaWhatsApp
+
+    p = db.get(PlantillaWhatsApp, plantilla_id)
+    if (
+        p is None
+        or not servicio_plantillas.enviable(p)
+        or not servicio_plantillas.compatible_con(p, tipo)
+    ):
+        raise ErrorApp(
+            422,
+            "VALIDACION",
+            "Los datos enviados no son válidos.",
+            [
+                detalle(
+                    "plantilla_inicial_id",
+                    "Debe ser una plantilla enviable compatible con la campaña.",
+                )
+            ],
+        )
+
+
 def crear(db: Session, datos: CampanaCrear, usuario: Usuario) -> CampanaSalida:
     if _nombre_existe(db, datos.nombre):
         raise _duplicado()
+    _validar_plantilla_inicial(db, datos.plantilla_inicial_id, datos.tipo)
     campana = Campana(**datos.model_dump(), estado="borrador", creado_por=usuario.id)
     db.add(campana)
     try:
@@ -125,7 +152,13 @@ def actualizar(
         raise ErrorApp(409, "CAMPANA_FINALIZADA", "La campaña está finalizada y no admite cambios.")
 
     # Campos no nulables: un null explícito se ignora.
-    for campo in ("nombre", "max_intentos", "intervalo_reintento_minutos", "estado"):
+    for campo in (
+        "nombre",
+        "max_intentos",
+        "intervalo_reintento_minutos",
+        "estado",
+        "whatsapp_habilitado",
+    ):
         if campo in cambios and cambios[campo] is None:
             del cambios[campo]
 
@@ -141,6 +174,9 @@ def actualizar(
             "Los datos enviados no son válidos.",
             [detalle("fecha_fin", "fecha_fin no puede ser anterior a fecha_inicio.")],
         )
+
+    if "plantilla_inicial_id" in cambios:
+        _validar_plantilla_inicial(db, cambios["plantilla_inicial_id"], campana.tipo)
 
     estado_anterior = campana.estado
     nuevo_estado = cambios.pop("estado", None)

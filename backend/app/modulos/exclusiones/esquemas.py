@@ -7,6 +7,8 @@ from app.tipos import FechaHoraZ
 
 Motivo = Literal["rne", "solicitud_titular", "numero_errado", "manual"]
 AplicaA = Literal["venta", "cobranza", "todas"]
+CanalExclusion = Literal["todos", "voz", "whatsapp"]
+OrigenExclusion = Literal["usuario", "sistema", "agente_ia"]
 
 
 class ExclusionSalida(BaseModel):
@@ -16,8 +18,11 @@ class ExclusionSalida(BaseModel):
     numero_e164: str
     motivo: Motivo
     aplica_a: AplicaA
+    canal: CanalExclusion
+    origen: OrigenExclusion
     observacion: str | None
-    creado_por: int
+    creado_por: int | None
+    conversacion_id: int | None
     creado_en: FechaHoraZ
 
 
@@ -25,6 +30,7 @@ class ExclusionCrear(BaseModel):
     telefono: Annotated[str, Field(max_length=40)]
     motivo: Motivo
     aplica_a: AplicaA | None = None
+    canal: CanalExclusion = "todos"
     observacion: Annotated[str, Field(max_length=300)] | None = None
 
 

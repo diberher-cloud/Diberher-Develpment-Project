@@ -2,9 +2,10 @@
 
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import UploadFile
 from sqlalchemy import select, tuple_
@@ -34,6 +35,7 @@ REQUERIDAS = ("tipo_documento", "numero_documento", "nombre", "telefono_1")
 COLUMNAS_BASE = (
     "tipo_documento", "numero_documento", "nombre",
     "telefono_1", "telefono_2", "telefono_3", "email", "ciudad",
+    "autoriza_whatsapp", "fecha_autorizacion_whatsapp",
 )  # fmt: skip
 COLUMNAS_TIPO = {
     "cobranza": (
@@ -73,6 +75,8 @@ class FilaValida:
     producto: str | None = None
     oferta: str | None = None
     datos_adicionales: dict[str, str] = field(default_factory=dict)
+    autoriza_whatsapp: bool | None = None  # None = sin valor (o inválido, ignorado)
+    fecha_autorizacion_whatsapp: date | None = None
 
 
 @dataclass
@@ -94,7 +98,11 @@ def columnas_propias(tipo_campana: str) -> tuple[str, ...]:
 
 
 def validar_fila(
-    numero: int, valores: dict[str, str], tipo_campana: str, extras: list[str]
+    numero: int,
+    valores: dict[str, str],
+    tipo_campana: str,
+    extras: list[str],
+    hoy: date | None = None,
 ) -> ResultadoFila:
     """Validación pura de una fila. No consulta la BD."""
     inc: list[Incidencia] = []
@@ -177,6 +185,8 @@ def validar_fila(
         telefonos=validos,
     )
 
+    _validar_autorizacion(datos, valores, adv, hoy or _hoy_local())
+
     if tipo_campana == "cobranza":
         datos.numero_obligacion = texto_opcional("numero_obligacion", 50)
         for campo in ("saldo_total", "saldo_mora"):
@@ -206,6 +216,33 @@ def validar_fila(
 
     hay_error = any(i.severidad == "error" for i in inc)
     return ResultadoFila(numero, None if hay_error else datos, inc)
+
+
+def _hoy_local() -> date:
+    return datetime.now(ZoneInfo("America/Bogota")).date()
+
+
+def _validar_autorizacion(datos: FilaValida, valores: dict[str, str], adv, hoy: date) -> None:
+    """Columnas opcionales `autoriza_whatsapp` (si/sí/no) y `fecha_autorizacion_whatsapp`."""
+    crudo = valores.get("autoriza_whatsapp", "").strip().lower()
+    if not crudo:
+        return
+    mensaje = "Autorización de WhatsApp inválida; se ignora."
+    if crudo not in ("si", "sí", "no"):
+        adv("autoriza_whatsapp", "AUTORIZACION_WHATSAPP_INVALIDA", mensaje)
+        return
+    if crudo == "no":
+        datos.autoriza_whatsapp = False
+        return
+    try:
+        fecha = nz.parsear_fecha(valores.get("fecha_autorizacion_whatsapp"))
+    except nz.ErrorValor:
+        fecha = None
+    if fecha is None or fecha > hoy:
+        adv("fecha_autorizacion_whatsapp", "AUTORIZACION_WHATSAPP_INVALIDA", mensaje)
+        return
+    datos.autoriza_whatsapp = True
+    datos.fecha_autorizacion_whatsapp = fecha
 
 
 def _lotes(valores: Iterable[Any], tam: int = _LOTE) -> Iterator[list[Any]]:
@@ -269,7 +306,9 @@ def _excluidos_entre(db: Session, tipo_campana: str, numeros: Iterable[str]) -> 
         resultado.update(
             db.scalars(
                 select(Exclusion.numero_e164).where(
-                    Exclusion.numero_e164.in_(lote), Exclusion.aplica_a.in_((tipo_campana, "todas"))
+                    Exclusion.numero_e164.in_(lote),
+                    Exclusion.aplica_a.in_((tipo_campana, "todas")),
+                    Exclusion.canal.in_(("todos", "voz")),
                 )
             )
         )
@@ -361,6 +400,8 @@ def importar(
 
         vistos: dict[tuple[str, str], int] = {}
         importadas = duplicadas = invalidas = excluidas = 0
+        auto = {"creadas": 0, "revocadas": 0, "ignoradas": 0}
+        hay_columnas_auto = "autoriza_whatsapp" in archivo.cabeceras
         for r in resultados:
             incidencias.extend(r.incidencias)
             d = r.datos
@@ -421,7 +462,20 @@ def importar(
                 )
             _guardar(db, campana.id, imp.id, d, existentes, tels_existentes)
             importadas += 1
+            _autorizar(db, d, tipo, imp.id, r.fila, auto)
 
+        if hay_columnas_auto:
+            auto["ignoradas"] = sum(
+                1 for i in incidencias if i.codigo == "AUTORIZACION_WHATSAPP_INVALIDA"
+            )
+            auditoria.registrar(
+                db,
+                "importacion.autorizaciones",
+                usuario.id,
+                "importacion",
+                imp.id,
+                {"importacion_id": imp.id, **auto},
+            )
         imp.filas_importadas = importadas
         imp.filas_duplicadas = duplicadas
         imp.filas_invalidas = invalidas
@@ -489,6 +543,39 @@ def importar(
         ],  # type: ignore[arg-type]
         errores_truncados=len(incidencias) > MAX_ERRORES_RESPUESTA,
     )
+
+
+def _autorizar(
+    db: Session, d: FilaValida, tipo: str, importacion_id: int, fila: int, auto: dict[str, int]
+) -> None:
+    """`si` + fecha: una autorización por móvil; `no`: revoca las vigentes de esos móviles."""
+    from app.modulos.whatsapp import servicio_autorizaciones as autorizaciones
+
+    if d.autoriza_whatsapp is None:
+        return
+    ahora = datetime.now(ZoneInfo("UTC"))
+    moviles = [t.numero_e164 for _, t in d.telefonos if t.tipo_linea == "movil"]
+    if d.autoriza_whatsapp:
+        assert d.fecha_autorizacion_whatsapp is not None
+        otorgada = datetime.combine(
+            d.fecha_autorizacion_whatsapp, datetime.min.time(), tzinfo=ZoneInfo("America/Bogota")
+        )
+        for numero in moviles:
+            if autorizaciones.alta_importacion(
+                db,
+                numero=numero,
+                finalidad=tipo,
+                otorgada_en=otorgada,
+                importacion_id=importacion_id,
+                fila=fila,
+                ahora=ahora,
+            ):
+                auto["creadas"] += 1
+    else:
+        for numero in moviles:
+            auto["revocadas"] += autorizaciones.revocar_vigentes(
+                db, numero, ahora, "importacion", None, finalidades=(tipo,)
+            )
 
 
 def _guardar(

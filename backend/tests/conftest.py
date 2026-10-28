@@ -178,6 +178,36 @@ def firmar_twilio() -> Callable[..., dict]:
     return _firmar
 
 
+# ---- WhatsApp (2B) -----------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def proveedor_whatsapp():
+    """Proveedor de WhatsApp falso limpio en cada test."""
+    from app.integraciones.whatsapp.fabrica import (
+        obtener_proveedor_whatsapp,
+        reiniciar_proveedor_whatsapp,
+    )
+
+    reiniciar_proveedor_whatsapp()
+    proveedor = obtener_proveedor_whatsapp()
+    proveedor.reiniciar()
+    yield proveedor
+    reiniciar_proveedor_whatsapp()
+
+
+@pytest.fixture()
+def correr_trabajos(
+    session_factory: sessionmaker[Session], reloj: "RelojFijo"
+) -> Callable[..., int]:
+    """Ejecuta de forma síncrona los trabajos disponibles (`ejecutar_pendientes`)."""
+    from app.trabajos.cola import ejecutar_pendientes
+
+    def _correr(ahora: datetime | None = None, maximo: int = 100) -> int:
+        with session_factory() as s:
+            return ejecutar_pendientes(s, ahora or reloj(), maximo)
+
+    return _correr
+
+
 @pytest.fixture()
 def esc(db: Session, admin: Usuario):
     from escenario import Escenario

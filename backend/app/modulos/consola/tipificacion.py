@@ -1,8 +1,11 @@
 """Tipificación de llamadas y listado por campaña (§4.6)."""
 
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, update
@@ -23,6 +26,7 @@ from app.modulos.consola.esquemas import (
     RegistroResultante,
     TipificacionCampanaSalida,
     TipificacionCrear,
+    TipificacionDatos,
     TipificacionSalida,
     VentaSalida,
 )
@@ -70,7 +74,7 @@ def _en_rango(momento: datetime | None) -> bool:
         return False
 
 
-def _validar_presencia(datos: TipificacionCrear) -> list[dict]:
+def _validar_presencia(datos: TipificacionDatos) -> list[dict]:
     errores: list[dict] = []
     r = datos.resultado
 
@@ -107,6 +111,243 @@ def tipificar_sistema(
     )
 
 
+@dataclass
+class Validada:
+    """Resultado de la validación común (llamada y conversación)."""
+
+    politica: Any
+    festivos: dict
+    monto: Decimal | None = None
+    fecha_pago: date | None = None
+    producto: str | None = None
+    valor_venta: Decimal | None = None
+    observacion: str | None = None
+
+
+def validar_comun(
+    db: Session,
+    datos: TipificacionDatos,
+    cc: CampanaCliente,
+    campana: Campana,
+    ahora: datetime,
+    coherencia: Callable[[], None] | None = None,
+) -> Validada:
+    """Validación de la tipificación (fase-2.md §4.6): campos condicionados, `coherencia` (propia
+    de cada contexto, tras la presencia), resultado permitido, montos y fechas."""
+    errores = _validar_presencia(datos)
+    if errores:
+        raise _validacion(errores)
+    r = datos.resultado
+    if coherencia is not None:
+        coherencia()
+    if (r == "promesa_pago" and campana.tipo != "cobranza") or (
+        r == "venta" and campana.tipo != "venta"
+    ):
+        raise ErrorApp(
+            422,
+            "RESULTADO_NO_PERMITIDO",
+            f"El resultado '{r}' no aplica a campañas de {campana.tipo}.",
+        )
+
+    observacion = (datos.observacion or "").strip() or None
+    if observacion is not None and len(observacion) > 1000:
+        raise _validacion([detalle("observacion", "Máximo 1000 caracteres.")])
+
+    politica, _version = cumplimiento.cargar_politica(db, campana.tipo)
+    zona = ZoneInfo(politica.zona_horaria)
+    errores = []
+    val = Validada(politica=politica, festivos={}, observacion=observacion)
+    if datos.promesa is not None:
+        val.monto = _decimal_positivo(datos.promesa.monto, "promesa.monto", errores)
+        if val.monto is not None and cc.saldo_total is not None and val.monto > cc.saldo_total:
+            errores.append(detalle("promesa.monto", "No puede superar el saldo total."))
+        hoy = ahora.astimezone(zona).date()
+        val.fecha_pago = datos.promesa.fecha_pago
+        maximo = hoy + timedelta(days=get_settings().promesa_max_dias)
+        if not hoy <= val.fecha_pago <= maximo:
+            errores.append(
+                detalle(
+                    "promesa.fecha_pago",
+                    f"Debe estar entre hoy y {get_settings().promesa_max_dias} días.",
+                )
+            )
+    if datos.venta is not None:
+        val.producto = " ".join(datos.venta.producto.split())
+        if not 2 <= len(val.producto) <= 120:
+            errores.append(detalle("venta.producto", "Debe tener entre 2 y 120 caracteres."))
+        val.valor_venta = _decimal_positivo(datos.venta.valor, "venta.valor", errores)
+    rastreable = _en_rango(datos.volver_a_llamar_en)
+    val.festivos = cumplimiento.cargar_festivos(
+        db, datos.volver_a_llamar_en if rastreable and datos.volver_a_llamar_en else ahora, politica
+    )
+    if datos.volver_a_llamar_en is not None:
+        cuando = datos.volver_a_llamar_en
+        if not rastreable:
+            errores.append(
+                detalle("volver_a_llamar_en", "La fecha debe estar entre los años 1984 y 2100.")
+            )
+        elif not ahora + timedelta(minutes=5) < cuando <= ahora + timedelta(days=30):
+            errores.append(
+                detalle(
+                    "volver_a_llamar_en",
+                    "Debe ser posterior a 5 minutos desde ahora y no exceder 30 días.",
+                )
+            )
+        else:
+            horario = motor.evaluar_horario(cuando, politica, val.festivos)
+            if not horario.permitido:
+                sugerida = (
+                    f" Próxima ventana: {horario.proxima_ventana_inicio.isoformat()}"
+                    if horario.proxima_ventana_inicio
+                    else ""
+                )
+                raise ErrorApp(
+                    422,
+                    "VOLVER_A_LLAMAR_FUERA_DE_FRANJA",
+                    "La fecha de rellamada no está permitida por la política de cumplimiento.",
+                    [detalle("volver_a_llamar_en", f"Fuera de franja.{sugerida}")],
+                )
+    if errores:
+        raise _validacion(errores)
+    return val
+
+
+@dataclass
+class Aplicada:
+    tip: Tipificacion
+    promesa: PromesaPago | None
+    venta: Venta | None
+    efecto: Any
+    es_dueno: bool
+
+
+def aplicar_efectos(
+    db: Session,
+    datos: TipificacionDatos,
+    val: Validada,
+    cc: CampanaCliente,
+    campana: Campana,
+    telefono: Telefono | None,
+    ahora: datetime,
+    *,
+    canal: str,
+    origen: str,
+    actor_id: int | None,
+    gestor_id: int,
+    llamada_id: int | None = None,
+    conversacion_id: int | None = None,
+) -> Aplicada:
+    """Crea la tipificación (y promesa/venta/exclusión) y actualiza el registro (B2c: solo
+    libera/cierra el registro si la reserva es de `gestor_id` o está libre). Sin commit."""
+    r = datos.resultado
+    otros_llamables = False
+    if r == "numero_errado" and telefono is not None:
+        otros = db.scalars(
+            select(Telefono).where(Telefono.cliente_id == cc.cliente_id, Telefono.id != telefono.id)
+        ).all()
+        excluidos = consola.exclusiones_de(db, {t.numero_e164 for t in otros}, campana.tipo)
+        otros_llamables = any(t.numero_e164 not in excluidos for t in otros)
+    efecto = calcular_efectos(
+        EntradaEfectos(
+            resultado=r,
+            ahora=ahora,
+            intentos=cc.intentos,
+            max_intentos=campana.max_intentos,
+            intervalo_reintento_minutos=campana.intervalo_reintento_minutos,
+            contacto_directo_pedido=datos.contacto_directo,
+            volver_a_llamar_en=datos.volver_a_llamar_en,
+            quedan_telefonos_llamables=otros_llamables,
+            proxima_ventana=lambda t: motor.proxima_ventana(t, val.politica, val.festivos),
+        )
+    )
+    tip = Tipificacion(
+        campana_cliente_id=cc.id,
+        canal=canal,
+        origen=origen,
+        usuario_id=actor_id,
+        llamada_id=llamada_id,
+        conversacion_id=conversacion_id,
+        resultado=r,
+        contacto_directo=efecto.contacto_directo,
+        observacion=val.observacion,
+        volver_a_llamar_en=datos.volver_a_llamar_en,
+        creado_en=ahora,
+    )
+    db.add(tip)
+    db.flush()
+    promesa = venta = None
+    if efecto.crear_promesa and val.monto is not None and val.fecha_pago is not None:
+        promesa = PromesaPago(
+            tipificacion_id=tip.id,
+            campana_cliente_id=cc.id,
+            monto=val.monto,
+            fecha_pago=val.fecha_pago,
+            numero_cuotas=1,
+            descuento_porcentaje=Decimal("0"),
+            estado="vigente",
+            origen=origen,
+            creado_en=ahora,
+        )
+        db.add(promesa)
+    if efecto.crear_venta and val.valor_venta is not None and val.producto is not None:
+        venta = Venta(
+            tipificacion_id=tip.id,
+            campana_cliente_id=cc.id,
+            producto=val.producto,
+            valor=val.valor_venta,
+            unidades=1,
+            origen=origen,
+            creado_en=ahora,
+        )
+        db.add(venta)
+    if efecto.excluir_telefono and telefono is not None:
+        existe = db.scalar(
+            select(Exclusion.id).where(
+                Exclusion.numero_e164 == telefono.numero_e164,
+                Exclusion.aplica_a == "todas",
+                Exclusion.canal == "todos",
+            )
+        )
+        if existe is None:
+            exclusion = Exclusion(
+                numero_e164=telefono.numero_e164,
+                motivo="numero_errado",
+                aplica_a="todas",
+                creado_por=gestor_id,
+            )
+            db.add(exclusion)
+            db.flush()
+            auditoria.registrar(
+                db,
+                "exclusion.crear",
+                actor_id,
+                "exclusion",
+                exclusion.id,
+                {"motivo": "numero_errado", "aplica_a": "todas"},
+            )
+    # B2c: solo se libera/cierra el registro si la reserva sigue siendo de este agente. Si
+    # otro agente lo tiene (caso excepcional), se registran la tipificación, el intento, la
+    # exclusión y los contadores (intentos, último resultado), pero NO se toca su reserva,
+    # el estado del registro ni `proximo_intento_en`.
+    es_dueno = cc.reservado_por in (gestor_id, None)
+    # Contador con UPDATE atómico (`intentos = intentos + 1`): no pisa incrementos concurrentes.
+    db.flush()
+    db.execute(
+        update(CampanaCliente)
+        .where(CampanaCliente.id == cc.id)
+        .values(intentos=CampanaCliente.intentos + 1)
+        .execution_options(synchronize_session=False)
+    )
+    db.refresh(cc)
+    if es_dueno:
+        consola.liberar_registro(cc)
+        cc.estado = efecto.estado
+        cc.proximo_intento_en = efecto.proximo_intento_en
+    cc.ultimo_resultado = r
+    cc.ultima_gestion_en = ahora
+    return Aplicada(tip, promesa, venta, efecto, es_dueno)
+
+
 def _tipificar(
     db: Session,
     datos: TipificacionCrear,
@@ -140,199 +381,41 @@ def _tipificar(
         db.rollback()  # otra tipificación simultánea ganó mientras esperábamos el bloqueo
         raise ErrorApp(409, "LLAMADA_YA_TIPIFICADA", "La llamada ya fue tipificada.")
 
-    errores = _validar_presencia(datos)
-    if errores:
-        raise _validacion(errores)
-    r = datos.resultado
-    if llamada.estado in ESTADOS_NO_CONTESTADA and r not in ("no_contesta", "numero_errado"):
-        raise ErrorApp(
-            422,
-            "RESULTADO_INCOHERENTE",
-            f"La llamada terminó en '{llamada.estado}'; "
-            "solo admite 'no_contesta' o 'numero_errado'.",
-        )
-    if (r == "promesa_pago" and campana.tipo != "cobranza") or (
-        r == "venta" and campana.tipo != "venta"
-    ):
-        raise ErrorApp(
-            422,
-            "RESULTADO_NO_PERMITIDO",
-            f"El resultado '{r}' no aplica a campañas de {campana.tipo}.",
-        )
-
-    observacion = (datos.observacion or "").strip() or None
-    if observacion is not None and len(observacion) > 1000:
-        raise _validacion([detalle("observacion", "Máximo 1000 caracteres.")])
-
-    politica, _version = cumplimiento.cargar_politica(db, campana.tipo)
-    zona = ZoneInfo(politica.zona_horaria)
-    errores = []
-    monto = fecha_pago = valor_venta = None
-    producto = None
-    if datos.promesa is not None:
-        monto = _decimal_positivo(datos.promesa.monto, "promesa.monto", errores)
-        if monto is not None and cc.saldo_total is not None and monto > cc.saldo_total:
-            errores.append(detalle("promesa.monto", "No puede superar el saldo total."))
-        hoy = ahora.astimezone(zona).date()
-        fecha_pago = datos.promesa.fecha_pago
-        maximo = hoy + timedelta(days=get_settings().promesa_max_dias)
-        if not hoy <= fecha_pago <= maximo:
-            errores.append(
-                detalle(
-                    "promesa.fecha_pago",
-                    f"Debe estar entre hoy y {get_settings().promesa_max_dias} días.",
-                )
+    def coherencia() -> None:
+        if llamada.estado in ESTADOS_NO_CONTESTADA and datos.resultado not in (
+            "no_contesta",
+            "numero_errado",
+        ):
+            raise ErrorApp(
+                422,
+                "RESULTADO_INCOHERENTE",
+                f"La llamada terminó en '{llamada.estado}'; "
+                "solo admite 'no_contesta' o 'numero_errado'.",
             )
-    if datos.venta is not None:
-        producto = " ".join(datos.venta.producto.split())
-        if not 2 <= len(producto) <= 120:
-            errores.append(detalle("venta.producto", "Debe tener entre 2 y 120 caracteres."))
-        valor_venta = _decimal_positivo(datos.venta.valor, "venta.valor", errores)
-    rastreable = _en_rango(datos.volver_a_llamar_en)
-    festivos = cumplimiento.cargar_festivos(
-        db, datos.volver_a_llamar_en if rastreable and datos.volver_a_llamar_en else ahora, politica
-    )
-    if datos.volver_a_llamar_en is not None:
-        cuando = datos.volver_a_llamar_en
-        if not rastreable:
-            errores.append(
-                detalle("volver_a_llamar_en", "La fecha debe estar entre los años 1984 y 2100.")
-            )
-        elif not ahora + timedelta(minutes=5) < cuando <= ahora + timedelta(days=30):
-            errores.append(
-                detalle(
-                    "volver_a_llamar_en",
-                    "Debe ser posterior a 5 minutos desde ahora y no exceder 30 días.",
-                )
-            )
-        else:
-            horario = motor.evaluar_horario(cuando, politica, festivos)
-            if not horario.permitido:
-                sugerida = (
-                    f" Próxima ventana: {horario.proxima_ventana_inicio.isoformat()}"
-                    if horario.proxima_ventana_inicio
-                    else ""
-                )
-                raise ErrorApp(
-                    422,
-                    "VOLVER_A_LLAMAR_FUERA_DE_FRANJA",
-                    "La fecha de rellamada no está permitida por la política de cumplimiento.",
-                    [detalle("volver_a_llamar_en", f"Fuera de franja.{sugerida}")],
-                )
-    if errores:
-        raise _validacion(errores)
 
-    # ---- efectos ----
+    val = validar_comun(db, datos, cc, campana, ahora, coherencia)
     telefono = db.get(Telefono, llamada.telefono_id)
-    otros_llamables = False
-    if r == "numero_errado" and telefono is not None:
-        otros = db.scalars(
-            select(Telefono).where(Telefono.cliente_id == cc.cliente_id, Telefono.id != telefono.id)
-        ).all()
-        excluidos = consola.exclusiones_de(db, {t.numero_e164 for t in otros}, campana.tipo)
-        otros_llamables = any(t.numero_e164 not in excluidos for t in otros)
-    efecto = calcular_efectos(
-        EntradaEfectos(
-            resultado=r,
-            ahora=ahora,
-            intentos=cc.intentos,
-            max_intentos=campana.max_intentos,
-            intervalo_reintento_minutos=campana.intervalo_reintento_minutos,
-            contacto_directo_pedido=datos.contacto_directo,
-            volver_a_llamar_en=datos.volver_a_llamar_en,
-            quedan_telefonos_llamables=otros_llamables,
-            proxima_ventana=lambda t: motor.proxima_ventana(t, politica, festivos),
-        )
-    )
-
     try:
-        tip = Tipificacion(
-            campana_cliente_id=cc.id,
+        aplicada = aplicar_efectos(
+            db,
+            datos,
+            val,
+            cc,
+            campana,
+            telefono,
+            ahora,
             canal="voz",
             origen=origen,
-            usuario_id=actor_id,
+            actor_id=actor_id,
+            gestor_id=agente_id,
             llamada_id=llamada.id,
-            resultado=r,
-            contacto_directo=efecto.contacto_directo,
-            observacion=observacion,
-            volver_a_llamar_en=datos.volver_a_llamar_en,
-            creado_en=ahora,
         )
-        db.add(tip)
-        db.flush()
-        promesa = venta = None
-        if efecto.crear_promesa and monto is not None and fecha_pago is not None:
-            promesa = PromesaPago(
-                tipificacion_id=tip.id,
-                campana_cliente_id=cc.id,
-                monto=monto,
-                fecha_pago=fecha_pago,
-                numero_cuotas=1,
-                descuento_porcentaje=Decimal("0"),
-                estado="vigente",
-                origen=origen,
-                creado_en=ahora,
-            )
-            db.add(promesa)
-        if efecto.crear_venta and valor_venta is not None and producto is not None:
-            venta = Venta(
-                tipificacion_id=tip.id,
-                campana_cliente_id=cc.id,
-                producto=producto,
-                valor=valor_venta,
-                unidades=1,
-                origen=origen,
-                creado_en=ahora,
-            )
-            db.add(venta)
-        if efecto.excluir_telefono and telefono is not None:
-            existe = db.scalar(
-                select(Exclusion.id).where(
-                    Exclusion.numero_e164 == telefono.numero_e164, Exclusion.aplica_a == "todas"
-                )
-            )
-            if existe is None:
-                exclusion = Exclusion(
-                    numero_e164=telefono.numero_e164,
-                    motivo="numero_errado",
-                    aplica_a="todas",
-                    creado_por=agente_id,
-                )
-                db.add(exclusion)
-                db.flush()
-                auditoria.registrar(
-                    db,
-                    "exclusion.crear",
-                    actor_id,
-                    "exclusion",
-                    exclusion.id,
-                    {"motivo": "numero_errado", "aplica_a": "todas"},
-                )
-        # B2c: solo se libera/cierra el registro si la reserva sigue siendo de este agente. Si
-        # otro agente lo tiene (caso excepcional), se registran la tipificación, el intento, la
-        # exclusión y los contadores (intentos, último resultado), pero NO se toca su reserva,
-        # el estado del registro ni `proximo_intento_en`.
-        es_dueno = cc.reservado_por in (agente_id, None)
-        # Contador con UPDATE atómico (`intentos = intentos + 1`): no pisa incrementos concurrentes.
-        db.flush()
-        db.execute(
-            update(CampanaCliente)
-            .where(CampanaCliente.id == cc.id)
-            .values(intentos=CampanaCliente.intentos + 1)
-            .execution_options(synchronize_session=False)
-        )
-        db.refresh(cc)
-        if es_dueno:
-            consola.liberar_registro(cc)
-            cc.estado = efecto.estado
-            cc.proximo_intento_en = efecto.proximo_intento_en
-        cc.ultimo_resultado = r
-        cc.ultima_gestion_en = ahora
+        tip, efecto, es_dueno = aplicada.tip, aplicada.efecto, aplicada.es_dueno
         if llamada.intento_contacto_id is not None:
             intento = db.get(IntentoContacto, llamada.intento_contacto_id)
             if intento is not None:
                 intento.contacto_directo = efecto.contacto_directo
-                intento.resultado = r
+                intento.resultado = datos.resultado
         actual = estado_agente.obtener(db, agente_id)
         if origen == "agente" or (
             actual is not None
@@ -349,7 +432,7 @@ def _tipificar(
             actor_id,
             "tipificacion",
             tip.id,
-            {"tipificacion_id": tip.id, "llamada_id": llamada.id, "resultado": r},
+            {"tipificacion_id": tip.id, "llamada_id": llamada.id, "resultado": datos.resultado},
         )
         if es_dueno:
             consola.publicar_registro(
@@ -362,7 +445,7 @@ def _tipificar(
     except Exception:
         db.rollback()
         raise
-    return _salida(tip, promesa, venta, cc)
+    return _salida(tip, aplicada.promesa, aplicada.venta, cc)
 
 
 def _salida(
@@ -383,6 +466,7 @@ def _base(tip: Tipificacion, promesa: PromesaPago | None, venta: Venta | None) -
         "id": tip.id,
         "campana_cliente_id": tip.campana_cliente_id,
         "llamada_id": tip.llamada_id,
+        "conversacion_id": tip.conversacion_id,
         "canal": tip.canal,
         "origen": tip.origen,
         "usuario_id": tip.usuario_id,

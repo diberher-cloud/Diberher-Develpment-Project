@@ -62,6 +62,7 @@ def listar_clientes_campana(
                 select(Exclusion.numero_e164).where(
                     Exclusion.numero_e164.in_(numeros),
                     Exclusion.aplica_a.in_((campana.tipo, "todas")),
+                    Exclusion.canal.in_(("todos", "voz")),
                 )
             )
         )

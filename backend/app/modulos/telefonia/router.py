@@ -1,6 +1,5 @@
 """Endpoints de telefonía: token (JWT) y TwiML/webhooks de Twilio (firma, sin JWT)."""
 
-import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -9,15 +8,14 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.dependencias import requiere_rol
-from app.errores import ErrorApp
 from app.integraciones.telefonia.fabrica import obtener_proveedor
 from app.integraciones.telefonia.proveedor import ProveedorTelefonia
+from app.integraciones.twilio_webhook import validar_peticion_twilio
 from app.modulos.telefonia import servicio, twiml
 from app.modulos.telefonia.esquemas import TokenSalida
 from app.modulos.usuarios.modelos import Usuario
 from app.reloj import Reloj, get_reloj
 
-logger = logging.getLogger("app")
 router = APIRouter(prefix="/telefonia", tags=["telefonía"])
 Agente = Annotated[Usuario, Depends(requiere_rol("agente"))]
 Db = Annotated[Session, Depends(get_db)]
@@ -26,27 +24,12 @@ Proveedor = Annotated[ProveedorTelefonia, Depends(obtener_proveedor)]
 XML = "application/xml"
 
 
-async def validar_peticion_twilio(request: Request, proveedor: Proveedor) -> dict[str, str]:
-    """Valida `X-Twilio-Signature` ANTES de cualquier otro procesamiento (ADR-0013 §1).
-
-    URL firmada = PUBLIC_BASE_URL + ruta + query original. Devuelve los parámetros del formulario.
-    """
-    formulario = await request.form()
-    multiples: dict[str, list[str]] = {}
-    for clave, valor in formulario.multi_items():
-        if isinstance(valor, str):
-            multiples.setdefault(clave, []).append(valor)
-    consulta = request.url.query
-    url = get_settings().public_base_url + request.url.path + (f"?{consulta}" if consulta else "")
-    firma = request.headers.get("X-Twilio-Signature")
-    firmables = {k: v[0] if len(v) == 1 else v for k, v in multiples.items()}
-    if not proveedor.validar_firma(url, firmables, firma):  # type: ignore[arg-type]
-        logger.warning("Firma de Twilio inválida en %s", request.url.path)
-        raise ErrorApp(403, "FIRMA_INVALIDA", "Firma inválida.")
-    return {k: v[0] for k, v in multiples.items()}
+async def _validar_peticion(request: Request, proveedor: Proveedor) -> dict[str, str]:
+    """Firma de voz: lo común vive en `integraciones/twilio_webhook.py`."""
+    return await validar_peticion_twilio(request, proveedor.validar_firma)
 
 
-Firmado = Annotated[dict[str, str], Depends(validar_peticion_twilio)]
+Firmado = Annotated[dict[str, str], Depends(_validar_peticion)]
 
 
 @router.post("/token", response_model=TokenSalida)

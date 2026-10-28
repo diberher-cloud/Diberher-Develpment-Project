@@ -11,6 +11,7 @@ Nombre = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, m
 Guion = Annotated[str, Field(max_length=20000)]
 MaxIntentos = Annotated[int, Field(ge=1, le=10)]
 Intervalo = Annotated[int, Field(ge=5, le=10080)]
+IdPlantilla = Annotated[int, Field(ge=1, le=2**31 - 1)]
 
 
 class CampanaSalida(BaseModel):
@@ -26,6 +27,8 @@ class CampanaSalida(BaseModel):
     guion: str | None
     max_intentos: int
     intervalo_reintento_minutos: int
+    whatsapp_habilitado: bool = False
+    plantilla_inicial_id: int | None = None
     total_clientes: int = 0
     creado_por: int
     creado_en: FechaHoraZ
@@ -46,6 +49,8 @@ class CampanaCrear(BaseModel):
     guion: Guion | None = None
     max_intentos: MaxIntentos = 3
     intervalo_reintento_minutos: Intervalo = 60
+    whatsapp_habilitado: bool = False
+    plantilla_inicial_id: IdPlantilla | None = None
 
     @model_validator(mode="after")
     def _fechas(self) -> "CampanaCrear":
@@ -66,6 +71,8 @@ class CampanaActualizar(BaseModel):
     max_intentos: MaxIntentos | None = None
     intervalo_reintento_minutos: Intervalo | None = None
     estado: EstadoCampana | None = None
+    whatsapp_habilitado: bool | None = None
+    plantilla_inicial_id: IdPlantilla | None = None
 
 
 class AgenteAsignadoSalida(BaseModel):

@@ -23,7 +23,9 @@ from app.modulos.consola.esquemas import (
     TipificacionCrear,
     TipificacionSalida,
 )
+from app.modulos.conversaciones.esquemas import PlantillaConsolaCrear, ResultadoEnvioPlantilla
 from app.modulos.usuarios.modelos import Usuario
+from app.modulos.whatsapp import servicio_envio
 from app.paginacion import IdRuta, Pagina, Paginacion
 from app.reloj import Reloj, get_reloj
 
@@ -78,6 +80,25 @@ def soltar(registro_id: IdRuta, usuario: Agente, db: Db, reloj: RelojDep) -> Res
 @router.get("/registros/{registro_id}", response_model=FichaCliente)
 def ficha(registro_id: IdRuta, usuario: Agente, db: Db, reloj: RelojDep) -> FichaCliente:
     return servicio.ver_ficha(db, usuario, registro_id, reloj())
+
+
+@router.post("/registros/{registro_id}/whatsapp/plantilla", response_model=ResultadoEnvioPlantilla)
+def enviar_plantilla_whatsapp(
+    registro_id: IdRuta,
+    datos: PlantillaConsolaCrear,
+    usuario: Agente,
+    db: Db,
+    reloj: RelojDep,
+) -> ResultadoEnvioPlantilla:
+    return servicio_envio.enviar_plantilla_consola(
+        db,
+        usuario,
+        registro_id,
+        datos.telefono_id,
+        datos.plantilla_id,
+        datos.idempotencia_clave,
+        reloj(),
+    )
 
 
 @router.get("/llamadas/{llamada_id}", response_model=LlamadaSalida)

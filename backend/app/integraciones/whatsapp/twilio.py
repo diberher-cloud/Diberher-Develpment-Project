@@ -1,0 +1,232 @@
+"""Proveedor de WhatsApp sobre Twilio: SDK `twilio` (mensajes y Content API) y `httpx` para los
+medios entrantes (Basic Auth con la API Key, límite de bytes, sin reenviar credenciales a otros
+orígenes)."""
+
+import json
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal
+
+import httpx
+
+from app.config import Settings
+from app.integraciones import twilio_firma
+from app.integraciones.whatsapp import parseo
+from app.integraciones.whatsapp.proveedor import (
+    BotonPlantilla,
+    EnvioResultado,
+    ErrorProveedorWhatsApp,
+    EstadoMensaje,
+    MensajeEntrante,
+    PlantillaRemota,
+)
+
+_TIPOS_CON_CUERPO = ("twilio/text", "twilio/quick-reply", "twilio/call-to-action", "twilio/card")
+_APROBACION = {
+    "approved": "aprobada",
+    "pending": "pendiente",
+    "received": "pendiente",
+    "in_review": "pendiente",
+    "rejected": "rechazada",
+    "paused": "pausada",
+    "disabled": "deshabilitada",
+}
+_CATEGORIAS = ("marketing", "utility", "authentication")
+
+
+def _orden_variable(clave: str) -> tuple[int, int, str]:
+    return (0, int(clave), clave) if clave.isdigit() else (1, 0, clave)
+
+
+class ProveedorWhatsAppTwilio:
+    nombre: Literal["twilio", "falso"] = "twilio"
+
+    def __init__(
+        self,
+        settings: Settings,
+        cliente_rest: Callable[[], Any] | None = None,
+        transporte_http: httpx.BaseTransport | None = None,
+    ) -> None:
+        self._s = settings
+        self._cliente_rest = cliente_rest
+        self._transporte_http = transporte_http
+        self._cliente: Any = None
+
+    # ---- cliente -----------------------------------------------------------------------
+    def _cliente_twilio(self) -> Any:
+        if self._cliente_rest is not None:
+            return self._cliente_rest()
+        if self._cliente is None:
+            from twilio.http.http_client import TwilioHttpClient
+            from twilio.rest import Client
+
+            self._cliente = Client(
+                self._s.twilio_api_key_sid,
+                self._s.twilio_api_key_secret,
+                self._s.twilio_account_sid,
+                http_client=TwilioHttpClient(timeout=15),
+            )
+        return self._cliente
+
+    # ---- envío -------------------------------------------------------------------------
+    def _crear(self, **kwargs: Any) -> EnvioResultado:
+        import requests
+        from twilio.base.exceptions import TwilioRestException
+
+        try:
+            mensaje = self._cliente_twilio().messages.create(**kwargs)
+        except TwilioRestException as exc:
+            transitorio = exc.status in (429, 503)
+            raise ErrorProveedorWhatsApp(str(exc.code or exc.status), transitorio) from None
+        except requests.ConnectTimeout:
+            raise ErrorProveedorWhatsApp("CONEXION", transitorio=True) from None
+        except Exception:
+            # Pudo haberse enviado (p. ej. lectura caída): no se reintenta para no duplicar.
+            raise ErrorProveedorWhatsApp("ENVIO_INCIERTO", transitorio=False) from None
+        return EnvioResultado(str(mensaje.sid), str(mensaje.status or "queued"))
+
+    def enviar_texto(
+        self, *, origen: str, destino: str, texto: str, url_estado: str
+    ) -> EnvioResultado:
+        return self._crear(
+            from_=parseo.PREFIJO + origen,
+            to=parseo.PREFIJO + destino,
+            body=texto,
+            status_callback=url_estado,
+        )
+
+    def enviar_plantilla(
+        self,
+        *,
+        origen: str,
+        destino: str,
+        plantilla_ref: str,
+        variables: dict[str, str],
+        url_estado: str,
+    ) -> EnvioResultado:
+        return self._crear(
+            from_=parseo.PREFIJO + origen,
+            to=parseo.PREFIJO + destino,
+            content_sid=plantilla_ref,
+            content_variables=json.dumps(variables, ensure_ascii=False),
+            status_callback=url_estado,
+        )
+
+    # ---- plantillas --------------------------------------------------------------------
+    def listar_plantillas(self) -> list[PlantillaRemota]:
+        import requests
+        from twilio.base.exceptions import TwilioRestException
+
+        try:
+            filas = list(self._cliente_twilio().content.v1.content_and_approvals.list())
+        except TwilioRestException as exc:
+            raise ErrorProveedorWhatsApp(
+                "PROVEEDOR_NO_DISPONIBLE", transitorio=exc.status in (429, 503) or exc.status >= 500
+            ) from None
+        except requests.RequestException:
+            raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True) from None
+        resultado = []
+        for fila in filas:
+            plantilla = self._plantilla(fila)
+            if plantilla is not None:
+                resultado.append(plantilla)
+        return resultado
+
+    @staticmethod
+    def _plantilla(fila: Any) -> PlantillaRemota | None:
+        sid = getattr(fila, "sid", None)
+        if not sid:
+            return None
+        tipos: dict[str, Any] = getattr(fila, "types", None) or {}
+        cuerpo = ""
+        botones: list[BotonPlantilla] = []
+        for nombre in _TIPOS_CON_CUERPO:
+            contenido = tipos.get(nombre)
+            if isinstance(contenido, dict) and contenido.get("body"):
+                cuerpo = str(contenido["body"])
+                for accion in contenido.get("actions") or []:
+                    botones.append(_boton(accion))
+                break
+        aprobacion = (getattr(fila, "approval_requests", None) or {}).get("whatsapp") or {}
+        estado = _APROBACION.get(str(aprobacion.get("status", "")).lower(), "desconocido")
+        categoria = str(aprobacion.get("category", "")).lower()
+        variables = sorted((getattr(fila, "variables", None) or {}).keys(), key=_orden_variable)
+        motivo = aprobacion.get("rejection_reason") or None
+        return PlantillaRemota(
+            ref=str(sid),
+            nombre=str(getattr(fila, "friendly_name", None) or sid)[:200],
+            idioma=str(getattr(fila, "language", None) or "es")[:10],
+            categoria=categoria if categoria in _CATEGORIAS else "desconocida",
+            estado_aprobacion=estado,
+            motivo_rechazo=str(motivo)[:300] if motivo else None,
+            cuerpo=cuerpo,
+            variables=tuple(str(v) for v in variables),
+            botones=tuple(botones),
+        )
+
+    # ---- webhooks ----------------------------------------------------------------------
+    def validar_firma(
+        self, url: str, params: Mapping[str, str | Sequence[str]], firma: str | None
+    ) -> bool:
+        return twilio_firma.validar_firma(url, params, firma, self._s.twilio_auth_token)
+
+    def parsear_entrante(self, params: Mapping[str, str]) -> MensajeEntrante | None:
+        return parseo.parsear_entrante(params)
+
+    def parsear_estado(self, params: Mapping[str, str]) -> EstadoMensaje | None:
+        return parseo.parsear_estado(params)
+
+    # ---- medios ------------------------------------------------------------------------
+    def url_media_valida(self, url: str) -> bool:
+        """Anti-SSRF: solo el prefijo de mensajes de la cuenta configurada."""
+        if not self._s.twilio_account_sid:
+            return False
+        return url.startswith(
+            f"https://api.twilio.com/2010-04-01/Accounts/{self._s.twilio_account_sid}/Messages/"
+        )
+
+    def descargar_media(self, url: str, max_bytes: int) -> tuple[str, bytes]:
+        if not self.url_media_valida(url):
+            raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
+        try:
+            with (
+                httpx.Client(
+                    timeout=httpx.Timeout(10, connect=5),
+                    follow_redirects=True,
+                    auth=(self._s.twilio_api_key_sid, self._s.twilio_api_key_secret),
+                    transport=self._transporte_http,
+                ) as cliente,
+                cliente.stream("GET", url) as respuesta,
+            ):
+                if respuesta.status_code in (404, 410):
+                    raise ErrorProveedorWhatsApp("MEDIA_NO_DISPONIBLE", transitorio=False)
+                if respuesta.status_code == 429 or respuesta.status_code >= 500:
+                    raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True)
+                if respuesta.status_code != 200:
+                    raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=False)
+                declarado = respuesta.headers.get("content-length", "")
+                if declarado.isdigit() and int(declarado) > max_bytes:
+                    raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
+                cuerpo = bytearray()
+                for trozo in respuesta.iter_bytes():
+                    cuerpo.extend(trozo)
+                    if len(cuerpo) > max_bytes:
+                        raise ErrorProveedorWhatsApp("MEDIA_DEMASIADO_GRANDE", transitorio=False)
+                tipo = parseo.tipo_contenido_limpio(respuesta.headers.get("content-type"))
+                return tipo, bytes(cuerpo)
+        except httpx.HTTPError:
+            raise ErrorProveedorWhatsApp("PROVEEDOR_NO_DISPONIBLE", transitorio=True) from None
+
+
+def _boton(accion: Any) -> BotonPlantilla:
+    if not isinstance(accion, dict):
+        return BotonPlantilla("otro", "", None)
+    texto = str(accion.get("title") or accion.get("text") or "")[:100]
+    tipo = str(accion.get("type") or "QUICK_REPLY").upper()
+    if tipo == "QUICK_REPLY":
+        ident = accion.get("id")
+        return BotonPlantilla("respuesta_rapida", texto, str(ident) if ident else None)
+    if tipo == "URL":
+        return BotonPlantilla("url", texto, None)
+    if tipo == "PHONE_NUMBER":
+        return BotonPlantilla("telefono", texto, None)
+    return BotonPlantilla("otro", texto, None)

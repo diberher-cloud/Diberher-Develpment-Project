@@ -78,6 +78,11 @@ def fijar(
         )
     )
     db.flush()
+    if estado == "desconectado":
+        # Orden de bloqueos: estados_agente (ya actualizado) -> conversaciones del agente.
+        from app.modulos.conversaciones.servicio import liberar_del_agente
+
+        liberar_del_agente(db, usuario_id, ahora)
     bus.publicar(
         db,
         "agente.estado",

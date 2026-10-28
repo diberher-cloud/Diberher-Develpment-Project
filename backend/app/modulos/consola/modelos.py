@@ -68,6 +68,9 @@ class Tipificacion(Base):
         CheckConstraint(
             "origen <> 'agente' OR usuario_id IS NOT NULL", name="agente_requiere_usuario"
         ),
+        CheckConstraint(
+            "llamada_id IS NULL OR conversacion_id IS NULL", name="llamada_o_conversacion"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -77,6 +80,9 @@ class Tipificacion(Base):
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
     llamada_id: Mapped[int | None] = mapped_column(
         ForeignKey("llamadas.id"), unique=True, nullable=True
+    )
+    conversacion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversaciones.id"), unique=True, nullable=True
     )
     resultado: Mapped[str] = mapped_column(String(20))
     contacto_directo: Mapped[bool] = mapped_column(Boolean)

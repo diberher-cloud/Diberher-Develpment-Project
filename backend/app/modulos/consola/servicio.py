@@ -16,6 +16,7 @@ from app.modulos.consola import estado as estado_agente
 from app.modulos.consola.esquemas import (
     CampanaConsola,
     CampanaResumen,
+    ConversacionAbiertaRef,
     CumplimientoSalida,
     FichaCliente,
     GestionHistorial,
@@ -23,11 +24,13 @@ from app.modulos.consola.esquemas import (
     MotivoSalida,
     RegistroTrabajo,
     TelefonoFicha,
+    WhatsAppTelefono,
 )
 from app.modulos.consola.guion import renderizar_guion
 from app.modulos.consola.modelos import PromesaPago, Tipificacion, Venta
 from app.modulos.cumplimiento import servicio as cumplimiento
 from app.modulos.cumplimiento.motor import ResultadoEvaluacion
+from app.modulos.exclusiones.consultas import CanalConsulta, exclusiones_aplicables
 from app.modulos.exclusiones.modelos import Exclusion
 from app.modulos.telefonia.modelos import Llamada
 from app.modulos.usuarios.modelos import Usuario
@@ -383,18 +386,10 @@ def _cumplimiento_salida(r: ResultadoEvaluacion, version: int) -> CumplimientoSa
     )
 
 
-def exclusiones_de(db: Session, numeros: set[str], tipo_campana: str) -> dict[str, Exclusion]:
-    if not numeros:
-        return {}
-    filas = db.scalars(
-        select(Exclusion)
-        .where(Exclusion.numero_e164.in_(numeros), Exclusion.aplica_a.in_((tipo_campana, "todas")))
-        .order_by(Exclusion.id)
-    )
-    resultado: dict[str, Exclusion] = {}
-    for f in filas:
-        resultado.setdefault(f.numero_e164, f)
-    return resultado
+def exclusiones_de(
+    db: Session, numeros: set[str], tipo_campana: str, canal: CanalConsulta = "voz"
+) -> dict[str, Exclusion]:
+    return exclusiones_aplicables(db, numeros, tipo_campana, canal)
 
 
 def _historial(db: Session, cc_id: int) -> list[GestionHistorial]:
@@ -434,6 +429,82 @@ def _historial(db: Session, cc_id: int) -> list[GestionHistorial]:
     ]
 
 
+def _whatsapp_por_numero(
+    db: Session, cliente_id: int, telefonos: list[Telefono], campana: Campana, ahora: datetime
+) -> dict[str, WhatsAppTelefono]:
+    """Estado de WhatsApp de cada móvil (vacío si la campaña no tiene WhatsApp habilitado)."""
+    from app.modulos.conversaciones.modelos import Conversacion
+    from app.modulos.whatsapp import cumplimiento as cumplimiento_wa
+    from app.modulos.whatsapp.modelos import AutorizacionCanal
+    from app.modulos.whatsapp.ventana import ventana_abierta
+
+    moviles = [t for t in telefonos if t.tipo_linea == "movil"]
+    if not campana.whatsapp_habilitado or not moviles:
+        return {}
+    numeros = {t.numero_e164 for t in moviles}
+    empresa = get_settings().whatsapp_numero_empresa
+    excluidos = exclusiones_de(db, numeros, campana.tipo, "whatsapp")
+    autorizados = set(
+        db.scalars(
+            select(AutorizacionCanal.numero_e164).where(
+                AutorizacionCanal.numero_e164.in_(numeros),
+                AutorizacionCanal.clave_vigente.is_not(None),
+                AutorizacionCanal.finalidad.in_((campana.tipo, "todas")),
+            )
+        )
+    )
+    abiertas = {
+        c.numero_cliente_e164: c
+        for c in db.scalars(
+            select(Conversacion).where(
+                Conversacion.clave_abierta.in_([f"{n}|{empresa}" for n in numeros])
+            )
+        )
+    }
+    evaluacion, _ = cumplimiento.evaluar_para_cliente(
+        db, cliente_id, campana.tipo, "whatsapp_mensaje", ahora
+    )
+    margen = timedelta(seconds=get_settings().whatsapp_margen_ventana_segundos)
+    resultado: dict[str, WhatsAppTelefono] = {}
+    for t in moviles:
+        numero = t.numero_e164
+        motivos: list[MotivoSalida] = []
+        exc = excluidos.get(numero)
+        if exc is not None:
+            motivos.append(
+                MotivoSalida(
+                    codigo="EXCLUIDO",
+                    mensaje=cumplimiento_wa.mensaje_excluido(exc.motivo),
+                )
+            )
+        if numero not in autorizados:
+            motivos.append(
+                MotivoSalida(
+                    codigo="SIN_AUTORIZACION",
+                    mensaje=cumplimiento_wa.mensaje_sin_autorizacion(campana.tipo),
+                )
+            )
+        motivos.extend(MotivoSalida(codigo=m.codigo, mensaje=m.mensaje) for m in evaluacion.motivos)
+        conv = abiertas.get(numero)
+        abierta = (
+            ConversacionAbiertaRef(
+                id=conv.id,
+                atendida_por=conv.atendida_por,  # type: ignore[arg-type]
+                ventana_abierta=ventana_abierta(conv, ahora, margen),
+            )
+            if conv is not None
+            else None
+        )
+        resultado[numero] = WhatsAppTelefono(
+            autorizado=numero in autorizados,
+            excluido=exc is not None,
+            enviable=not motivos and not (abierta is not None and abierta.ventana_abierta),
+            motivos=motivos,
+            conversacion_abierta=abierta,
+        )
+    return resultado
+
+
 def construir_ficha(
     db: Session, cc: CampanaCliente, campana: Campana, usuario: Usuario, ahora: datetime
 ) -> FichaCliente:
@@ -453,6 +524,7 @@ def construir_ficha(
     )
     excluidos = exclusiones_de(db, {t.numero_e164 for t in telefonos}, campana.tipo)
     intentos_ok = cc.intentos < campana.max_intentos
+    whatsapp = _whatsapp_por_numero(db, cliente.id, telefonos, campana, ahora)
     fichas: list[TelefonoFicha] = []
     for t in telefonos:
         motivos: list[MotivoSalida] = []
@@ -471,6 +543,7 @@ def construir_ficha(
                 excluido=exc is not None,
                 llamable=exc is None and evaluacion.permitido and intentos_ok,
                 motivos=motivos,
+                whatsapp=whatsapp.get(t.numero_e164),
             )
         )
     nombre = cliente.nombre

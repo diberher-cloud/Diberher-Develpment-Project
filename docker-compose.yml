@@ -1,4 +1,18 @@
 # Desarrollo local. Copie `.env.example` a `.env` y defina JWT_SECRETO antes de `docker compose up`.
+# `backend` y `worker` comparten `env_file` (requiere Docker Compose >= 2.24 por `required: false`):
+# así toda variable del `.env` (TELEFONIA_*, TWILIO_*, WHATSAPP_*, WORKER_*, ...) llega a ambos
+# contenedores. `Settings` ignora las variables ajenas (POSTGRES_*, VITE_*).
+x-backend-comun: &backend-comun
+  build: ./backend
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-outbound}:${POSTGRES_PASSWORD:-outbound}@db:5432/${POSTGRES_DB:-outbound}
+    JWT_SECRETO: ${JWT_SECRETO:?Defina JWT_SECRETO (>= 32 caracteres) en .env}
+  volumes:
+    - ./backend:/app
+
 services:
   db:
     image: postgres:16-alpine
@@ -17,29 +31,34 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    <<: *backend-comun
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      ENTORNO: ${ENTORNO:-desarrollo}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-outbound}:${POSTGRES_PASSWORD:-outbound}@db:5432/${POSTGRES_DB:-outbound}
-      JWT_SECRETO: ${JWT_SECRETO:?Defina JWT_SECRETO (>= 32 caracteres) en .env}
-      JWT_EXPIRACION_MINUTOS: ${JWT_EXPIRACION_MINUTOS:-480}
-      BCRYPT_COSTE: ${BCRYPT_COSTE:-12}
-      CORS_ORIGENES: ${CORS_ORIGENES:-http://localhost:5173}
-      IMPORTACION_MAX_BYTES: ${IMPORTACION_MAX_BYTES:-10485760}
-      IMPORTACION_MAX_FILAS: ${IMPORTACION_MAX_FILAS:-50000}
-      EXCLUSIONES_MAX_FILAS: ${EXCLUSIONES_MAX_FILAS:-200000}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     command: >
       sh -c "alembic upgrade head &&
              python -m app.cli generar-festivos --desde 2025 --hasta 2028 &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+  worker:
+    <<: *backend-comun
+    depends_on:
+      backend:
+        condition: service_healthy   # las migraciones las aplica `backend`
+    command: python -m app.worker
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   frontend:
     build: ./frontend

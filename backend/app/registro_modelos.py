@@ -10,15 +10,26 @@ from app.modulos.consola.modelos import (
     Tipificacion,
     Venta,
 )
+from app.modulos.conversaciones.modelos import ColaAtencion, Conversacion, EventoMensaje, Mensaje
 from app.modulos.cumplimiento.modelos import Festivo, IntentoContacto, PoliticaCumplimiento
 from app.modulos.exclusiones.modelos import Exclusion
 from app.modulos.importacion.modelos import Importacion, ImportacionError
 from app.modulos.telefonia.modelos import EventoLlamada, Grabacion, Llamada
 from app.modulos.usuarios.modelos import Usuario
+from app.modulos.whatsapp.modelos import AutorizacionCanal, PlantillaWhatsApp
 from app.tiempo_real.modelos import TicketWS
+from app.trabajos.modelos import LatidoWorker, Trabajo
 
 __all__ = [
+    "AutorizacionCanal",
     "Auditoria",
+    "ColaAtencion",
+    "Conversacion",
+    "EventoMensaje",
+    "LatidoWorker",
+    "Mensaje",
+    "PlantillaWhatsApp",
+    "Trabajo",
     "Campana",
     "CampanaAgente",
     "EstadoAgente",

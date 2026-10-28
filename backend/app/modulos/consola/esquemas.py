@@ -90,6 +90,22 @@ class CumplimientoSalida(BaseModel):
     politica_version: int
 
 
+class ConversacionAbiertaRef(BaseModel):
+    id: int
+    atendida_por: Literal["sin_asignar", "humano", "ia"]
+    ventana_abierta: bool
+
+
+class WhatsAppTelefono(BaseModel):
+    """Estado de WhatsApp de un móvil en la ficha (nulo si la campaña no usa WhatsApp)."""
+
+    autorizado: bool
+    excluido: bool
+    enviable: bool
+    motivos: list[MotivoSalida]
+    conversacion_abierta: ConversacionAbiertaRef | None
+
+
 class TelefonoFicha(BaseModel):
     id: int
     numero_mascara: str
@@ -98,6 +114,7 @@ class TelefonoFicha(BaseModel):
     excluido: bool
     llamable: bool
     motivos: list[MotivoSalida]
+    whatsapp: WhatsAppTelefono | None = None
 
 
 class PromesaSalida(BaseModel):
@@ -191,14 +208,19 @@ class VentaEntrada(BaseModel):
     valor: str
 
 
-class TipificacionCrear(BaseModel):
-    llamada_id: IdEntrada
+class TipificacionDatos(BaseModel):
+    """Datos de una tipificación (comunes a llamada y conversación)."""
+
     resultado: Resultado
     observacion: str | None = None
     contacto_directo: bool | None = None
     promesa: PromesaEntrada | None = None
     venta: VentaEntrada | None = None
     volver_a_llamar_en: AwareDatetime | None = None
+
+
+class TipificacionCrear(TipificacionDatos):
+    llamada_id: IdEntrada
 
 
 class RegistroResultante(BaseModel):
@@ -211,6 +233,7 @@ class TipificacionBase(BaseModel):
     id: int
     campana_cliente_id: int
     llamada_id: int | None
+    conversacion_id: int | None = None
     canal: Canal
     origen: Origen
     usuario_id: int | None
