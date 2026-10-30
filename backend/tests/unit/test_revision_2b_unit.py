@@ -58,7 +58,7 @@ def test_s4b_libera_instancia_muerta_de_la_misma_maquina_y_no_la_ajena(session_f
     ajeno = encolar(db, "test.x", {})
     cola.tomar(db, "host-100-aaaa", T0, 1)  # instancia anterior, muerta (sin latido)
     cola.tomar(db, "otrohost-7-cccc", T0, 1)  # otra máquina
-    w = _worker(session_factory, "host-200-bbbb")
+    w = _worker(session_factory, "host-200-bbbb", reloj=lambda: T0 + timedelta(seconds=400))
     assert w.liberar_propios() == 1
     db.expire_all()
     p, a = db.get(Trabajo, propio.id), db.get(Trabajo, ajeno.id)
@@ -71,14 +71,32 @@ def test_s4b_dos_workers_vivos_no_se_liberan_trabajos_entre_si(session_factory, 
     cola.tomar(db, "host-100-aaaa", T0, 1)
     vivo = _worker(session_factory, "host-100-aaaa")
     vivo._latir()  # latido reciente: sigue vivo
-    otro = _worker(session_factory, "host-200-bbbb")
+    vencido = lambda: T0 + timedelta(seconds=400)  # noqa: E731
+    vivo._latir()
+    otro = _worker(session_factory, "host-200-bbbb", reloj=lambda: T0 + timedelta(seconds=10))
     assert otro.liberar_propios() == 0
     assert vivo.liberar_propios() == 0  # ni el propio en marcha normal
     db.expire_all()
     assert db.get(Trabajo, t.id).estado == "en_proceso"
     # Sin latido reciente (60 s) ya se considera muerto.
-    tarde = _worker(session_factory, "host-200-bbbb", reloj=lambda: T0 + timedelta(seconds=120))
+    tarde = _worker(session_factory, "host-200-bbbb", reloj=vencido)
     assert tarde.liberar_propios() == 1
+
+
+def test_s4b_no_libera_con_bloqueo_vigente_ni_de_un_host_con_prefijo_parecido(session_factory, db):
+    a = encolar(db, "test.x", {})
+    b = encolar(db, "test.y", {})
+    cola.tomar(db, "host-100-aaaa", T0, 1)  # sin latido, pero con bloqueo vigente
+    cola.tomar(db, "host-2-100-aaaa", T0, 1)  # host "host-2", no "host"
+    w = _worker(session_factory, "host-200-bbbb", reloj=lambda: T0 + timedelta(seconds=120))
+    assert w.liberar_propios() == 0  # bloqueo (300 s) aún vigente
+    w = _worker(session_factory, "host-200-bbbb", reloj=lambda: T0 + timedelta(seconds=400))
+    assert w.liberar_propios() == 1
+    db.expire_all()
+    assert (db.get(Trabajo, a.id).estado, db.get(Trabajo, b.id).estado) == (
+        "pendiente",
+        "en_proceso",
+    )
 
 
 def test_s4b_al_arrancar_libera_sus_propios_trabajos(session_factory, db):
@@ -327,3 +345,21 @@ def test_s12_errores_de_conexion_previos_al_envio_son_transitorios(error, codigo
     with pytest.raises(ErrorProveedorWhatsApp) as e:
         _twilio(error).enviar_texto(origen="+57300", destino="+57301", texto="x", url_estado="u")
     assert (e.value.codigo, e.value.transitorio) == (codigo, transitorio)
+
+
+@pytest.mark.parametrize(
+    ("estado", "esperado"), [("enviando", "ENVIO_INCIERTO"), ("pendiente", "AGOTADO")]
+)
+def test_envio_agotado_codigo_segun_estado(db, esc, crear_usuario, reloj, estado, esperado):
+    from wa import contexto, crear_conv, crear_saliente
+
+    from app.modulos.conversaciones.dueno import Humano
+    from app.modulos.whatsapp import servicio_envio
+
+    ctx = contexto(esc, crear_usuario, reloj, db)
+    conv = crear_conv(db, reloj(), cc=ctx.cc, dueno=Humano(ctx.agente.id))
+    m = crear_saliente(db, conv, reloj(), estado=estado, autor="agente", usuario_id=ctx.agente.id)
+    servicio_envio.envio_agotado(db, {"mensaje_id": m.id}, "AGOTADO", reloj())
+    db.commit()
+    db.refresh(m)
+    assert m.estado == "fallido" and m.error_codigo == esperado

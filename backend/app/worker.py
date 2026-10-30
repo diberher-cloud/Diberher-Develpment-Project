@@ -15,7 +15,7 @@ import socket
 import sys
 import threading
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -157,8 +157,19 @@ class Trabajador:
             liberados = 0
             for t in list(candidatos):
                 propio = t.bloqueado_por == self.nombre
-                if (propio and not incluir_propio) or (not propio and t.bloqueado_por in vivos):
-                    continue
+                if propio:
+                    if not incluir_propio:
+                        continue
+                else:
+                    # Host exacto (no un prefijo de otro host), sin latido reciente y con el
+                    # bloqueo ya vencido: un trabajo largo de un worker vivo no se libera.
+                    if t.bloqueado_por.rsplit("-", 2)[0] + "-" != self.prefijo:
+                        continue
+                    if t.bloqueado_por in vivos:
+                        continue
+                    hasta = t.bloqueado_hasta
+                    if hasta is not None and hasta.replace(tzinfo=hasta.tzinfo or UTC) >= momento:
+                        continue
                 if t.intentos >= t.max_intentos:
                     cola.agotar(db, t, "AGOTADO", momento)
                 else:

@@ -699,4 +699,5 @@ def envio_agotado(db: Session, payload: dict[str, Any], codigo: str, ahora: date
     conv = conversaciones.bloquear(db, previo.conversacion_id)
     m = _bloquear_mensaje(db, previo.id)
     if m is not None and m.estado in ("pendiente", "retenido", "enviando"):
-        _fallar(db, conv, m, codigo)
+        # Si estaba `enviando` el proveedor pudo haber recibido el mensaje: resultado incierto.
+        _fallar(db, conv, m, "ENVIO_INCIERTO" if m.estado == "enviando" else codigo)
