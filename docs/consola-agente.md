@@ -8,8 +8,9 @@ Diseño: [ADR-0017](arquitectura/adr-0017-consola-agente-y-tipificaciones.md) y
 Frecuencia y horario: [`cumplimiento-frecuencia.md`](cumplimiento-frecuencia.md).
 
 > **Alcance de 2A.** Llamadas salientes manuales (preview manual) con reserva de registro. No hay marcador
-> automático, reintentos automáticos, transferencias ni llamadas entrantes. WhatsApp y el agente de IA llegan
-> en las subfases 2B a 2E.
+> automático, reintentos automáticos, transferencias ni llamadas entrantes. Desde la subfase 2B, la ficha muestra el
+> estado de WhatsApp de cada teléfono y permite enviar plantillas (sección 5.1). La conversación de WhatsApp se atiende
+> en la bandeja: [`bandeja-whatsapp.md`](bandeja-whatsapp.md). El agente de IA llega en las subfases 2C y 2D.
 
 Índice: [Quién usa la consola](#1-quién-usa-la-consola) · [Estados](#2-estados-del-agente) ·
 [Lista de trabajo](#3-lista-de-trabajo) · [Tomar, soltar y reservas](#4-tomar-soltar-y-reservas) ·
@@ -157,6 +158,23 @@ La ficha contiene:
 La consola nunca muestra un número completo en `/consola/*`.
 
 ---
+
+### 5.1 WhatsApp en la ficha (desde 2B)
+
+Cada teléfono móvil de la ficha muestra su estado de WhatsApp, si la campaña lo tiene habilitado:
+
+- **Autorizado** o **Sin autorización:** según haya autorización vigente para la finalidad de la campaña.
+- **Excluido de WhatsApp:** hay una exclusión que aplica a WhatsApp (por ejemplo, una baja).
+- **Conversación abierta:** la conversación con ese número existe, con la ventana abierta o cerrada.
+
+El botón **Enviar plantilla** aparece junto a cada teléfono móvil. Requiere tener el registro reservado. Si la plantilla
+no se puede enviar, el botón se deshabilita y muestra los motivos (`EXCLUIDO`, `SIN_AUTORIZACION`, `FESTIVO`,
+`DIA_SIN_FRANJA`, `FUERA_DE_FRANJA`, `FRECUENCIA_DIA` o `FRECUENCIA_MEDIOS`). Un bloqueo por cumplimiento no es un
+error: no se envía nada y no se crea ningún registro de contacto. Si se envía, aparece un enlace a la conversación en la
+bandeja.
+
+La ficha de voz **no bloquea la llamada** por tener una conversación de WhatsApp abierta: solo lo informa. La frecuencia
+sí cuenta las plantillas enviadas (ver [`cumplimiento-frecuencia.md`](cumplimiento-frecuencia.md)).
 
 ## 6. Llamar
 

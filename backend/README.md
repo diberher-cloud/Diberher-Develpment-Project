@@ -24,6 +24,10 @@ backend/
 │   ├── catalogos.py         # resultados, estados de agente y de llamada (enumeraciones)
 │   ├── cli.py               # crear-admin, generar-festivos, liberar-gestion
 │   ├── integraciones/       # 2A: firma de Twilio (pura) y proveedor de telefonía (twilio | falso)
+│   │                        # 2B: twilio_webhook.py (firma común voz/WhatsApp) y whatsapp/ (proveedor, twilio, falso, parseo)
+│   ├── trabajos/            # 2B: cola de trabajos (cola, registro, periódicos, mantenimiento) y modelos
+│   ├── worker.py            # 2B: `python -m app.worker` (bucle, latido, señales, `--healthcheck`)
+│   ├── saneamiento.py       # 2B: texto hostil (NUL y sustitutos Unicode) en la API y en los webhooks
 │   ├── tiempo_real/         # 2A: bus de eventos, conexiones WebSocket, escucha LISTEN, tickets
 │   └── modulos/
 │       ├── auth/            # login y me
@@ -35,9 +39,11 @@ backend/
 │       ├── cumplimiento/    # políticas, festivos, motor de horario (puro), frecuencia (puro, 2A)
 │       ├── consola/         # 2A: estados del agente, reservas, ficha, tipificaciones y efectos (puros)
 │       ├── telefonia/       # 2A: TwiML saliente, webhooks, finalización y simulación
-│       ├── supervision/     # 2A: estado de agentes en vivo
+│       ├── whatsapp/        # 2B: webhooks, configuración, plantillas, autorizaciones, envíos, estados, medios, opt-out, ventana
+│       ├── conversaciones/  # 2B: conversaciones, mensajes, dueño, resolución del registro, cola de atención, cierre
+│       ├── supervision/     # 2A: estado de agentes en vivo; 2B: estado de los trabajos y del worker
 │       └── auditoria/       # registro de acciones sensibles
-├── alembic/                 # env.py y versions/0001_esquema_inicial.py, 0002_consola_y_voz.py
+├── alembic/                 # env.py y versions/0001_esquema_inicial.py, 0002_consola_y_voz.py, 0003_whatsapp_bandeja.py
 ├── tests/
 │   ├── unit/                # lógica pura, sin BD
 │   ├── api/                 # endpoints con SQLite en memoria
@@ -68,7 +74,11 @@ alembic upgrade head                                    # esquema y políticas i
 python -m app.cli crear-admin --email admin@empresa.co --nombre "Ana Admin"
 python -m app.cli generar-festivos --desde 2025 --hasta 2028
 uvicorn app.main:app --reload --port 8000               # http://localhost:8000/api/v1/salud
+python -m app.worker                                    # 2B: worker de trabajos, en otra terminal
 ```
+
+- `python -m app.worker --healthcheck` sale con `0` si hay un latido de los últimos 60 s, y con `1` si no. Detalle del
+  worker, reintentos y `ENVIO_INCIERTO` en [`docs/whatsapp-twilio.md`](../docs/whatsapp-twilio.md), sección 4.
 
 - `crear-admin` pide la contraseña (10 a 128 caracteres) si `ADMIN_PASSWORD` está vacío.
 - `generar-festivos` es idempotente: no modifica fechas que ya existen (manuales, calculadas o desactivadas).
@@ -126,6 +136,25 @@ Plantilla completa: `.env.example`.
 | `IMPORTACION_MAX_BYTES_DESCOMPRIMIDO` | `104857600` (100 MiB) | Tamaño descomprimido máximo de un `.xlsx`. |
 | `WS_REVALIDAR_SEGUNDOS` | `60` | Cada cuánto se revalida en un WebSocket que el usuario sigue activo y con el mismo rol. |
 | `BUS_EVENTOS` | `auto` | `auto` (PostgreSQL si `DATABASE_URL` es PostgreSQL; si no, memoria), `memoria` o `postgres`. |
+| `WHATSAPP_PROVEEDOR` | `falso` | `falso` (sin red) o `twilio`. Con `twilio` exige las `TWILIO_*` no vacías y `PUBLIC_BASE_URL` con `https://` (salvo `ENTORNO=test`). |
+| `WHATSAPP_NUMERO_EMPRESA` | `+573000000001` | Remitente de WhatsApp en E.164. Solo se aceptan los entrantes dirigidos a este número. |
+| `WHATSAPP_MARGEN_VENTANA_SEGUNDOS` | `60` | Margen antes del cierre de la ventana de 24 h (0 a 3600). |
+| `WHATSAPP_MEDIA_MAX_BYTES` | `16777216` | Tamaño máximo de un adjunto que se descarga (1 KiB a 64 MiB). |
+| `WHATSAPP_MEDIA_CONCURRENCIA` | `4` | Descargas de adjuntos simultáneas por proceso. Si se exceden: `429 DEMASIADAS_DESCARGAS`. |
+| `WHATSAPP_MEDIA_DURACION_SEGUNDOS` | `30` | Duración total máxima de una descarga (5 a 300). |
+| `WHATSAPP_HOSTS_MEDIOS` | `media.twiliocdn.com` | Hosts adicionales permitidos en las redirecciones de medios. **Sin verificar con cuenta real** (ver `docs/whatsapp-twilio.md`, sección 1.7). |
+| `WHATSAPP_DIAS_RESOLUCION_PLANTILLA` | `30` | Días en los que una plantilla enviada decide el registro de un número (1 a 365). |
+| `WHATSAPP_PAYLOAD_BAJA` | `BAJA` | `payload` del botón de baja. Un botón con ese `payload` equivale a baja de WhatsApp. |
+| `WHATSAPP_FRASES_OPT_OUT` · `WHATSAPP_FRASES_OPT_OUT_TODOS` | vacío | Listas propias de frases de baja, separadas por `\|`. Vacío = listas por defecto. Si se definen, se desactivan los patrones de WhatsApp y de todos los canales. |
+| `WHATSAPP_MENSAJE_OPT_OUT` · `WHATSAPP_MENSAJE_OPT_OUT_TODOS` | texto de ejemplo | Confirmación de baja por canal (máximo 1000 caracteres; vacío = no se envía). |
+| `WHATSAPP_MENSAJE_ESPERA` | texto de ejemplo | Aviso de espera cuando no hay agentes disponibles (vacío = no se envía). |
+| `WHATSAPP_MENSAJE_FUERA_DE_FRANJA` | texto de ejemplo | Aviso al retener una respuesta fuera de franja (vacío = no se envía). |
+| `CONVERSACION_INACTIVIDAD_HORAS` | `24` | Horas sin mensajes tras las que se cierra una conversación (1 a 168). |
+| `ATENCION_MAX_CONVERSACIONES_AGENTE` | `5` | Conversaciones abiertas simultáneas por agente (1 a 50). |
+| `WORKER_INTERVALO_SEGUNDOS` | `1` | Espera del worker cuando no hay trabajos (0.1 a 60). |
+| `WORKER_LOTE` | `10` | Trabajos que toma el worker en cada vuelta (1 a 100). |
+| `WORKER_BLOQUEO_SEGUNDOS` | `300` | Reserva de un trabajo por un worker antes de poder retomarlo (30 a 3600). |
+| `PURGA_EVENTOS_HUERFANOS_DIAS` | `7` | Días tras los que se borran los estados que no se enlazaron a un mensaje (1 a 365). |
 | `TEST_DATABASE_URL` | — | Solo para `pytest -m postgres`. |
 
 Con `TELEFONIA_PROVEEDOR=twilio` se exige: las variables `TWILIO_*` no vacías, `TWILIO_NUMERO_SALIENTE` en E.164 y
@@ -136,7 +165,8 @@ reiniciar el proceso (la configuración está en caché).
 ## Endpoints
 
 Todos bajo `/api/v1`. Salvo `GET /salud` y `POST /auth/login`, requieren `Authorization: Bearer <jwt>`.
-Contratos completos en `docs/arquitectura/fase-1.md` (§4) y, para la subfase 2A, en `docs/arquitectura/fase-2.md` (§4).
+Contratos completos en `docs/arquitectura/fase-1.md` (§4), para la subfase 2A en `docs/arquitectura/fase-2.md` (§4) y
+para la 2B en `docs/arquitectura/fase-2b.md` (§4).
 
 | Método y ruta | Roles |
 |---|---|
@@ -166,6 +196,28 @@ Contratos completos en `docs/arquitectura/fase-1.md` (§4) y, para la subfase 2A
 | `GET /supervision/agentes` (2A) | administrador, supervisor |
 | `POST /ws/ticket` (2A) | cualquier usuario activo |
 | `GET /ws?ticket=<ticket>` (WebSocket, 2A) | ticket de un solo uso (30 s) |
+| `POST /whatsapp/webhooks/entrante`, `POST /whatsapp/webhooks/estado` (2B) | firma de Twilio (sin JWT) |
+| `GET /whatsapp/configuracion` (2B) | cualquier usuario activo |
+| `GET /whatsapp/plantillas` (2B) | administrador, supervisor; agente solo con `campana_id` asignada y solo plantillas enviables |
+| `POST /whatsapp/plantillas/sincronizar` (2B) | administrador |
+| `PUT /whatsapp/plantillas/{id}` (2B) | administrador, supervisor |
+| `GET/POST /autorizaciones`, `DELETE /autorizaciones/{id}` (2B) | administrador, supervisor |
+| `GET /conversaciones` (2B) | todos; el agente solo ve las suyas |
+| `GET /conversaciones/{id}`, `GET /conversaciones/{id}/mensajes` (2B) | dueño, administrador y supervisor |
+| `POST /conversaciones/{id}/mensajes`, `POST /conversaciones/{id}/plantillas` (2B) | dueño (cualquier rol) |
+| `POST /conversaciones/{id}/leida`, `POST /conversaciones/{id}/opt-out`, `POST /conversaciones/{id}/autorizacion` (2B) | dueño (cualquier rol) |
+| `GET /conversaciones/{id}/mensajes/{mensaje_id}/media/{indice}` (2B) | dueño, administrador y supervisor |
+| `GET /conversaciones/{id}/ficha`, `GET /conversaciones/{id}/registros-candidatos`, `PUT /conversaciones/{id}/registro` (2B) | ver: dueño, administrador y supervisor; vincular: dueño (agente) o cualquier A/S |
+| `POST /conversaciones/{id}/tomar` (2B) | agente con campaña asignada y estado disponible; administrador y supervisor sin restricción de campaña |
+| `POST /conversaciones/{id}/asignar` (2B) | administrador, supervisor |
+| `POST /conversaciones/{id}/liberar` (2B) | dueño, administrador y supervisor |
+| `POST /conversaciones/{id}/cerrar` (2B) | dueño (agente); administrador y supervisor sin ser dueños |
+| `GET /atencion/cola` (2B) | todos; el agente solo ve las campañas asignadas con WhatsApp |
+| `POST /atencion/tomar-siguiente` (2B) | agente |
+| `POST /consola/registros/{id}/whatsapp/plantilla` (2B) | agente con el registro reservado |
+| `GET /supervision/trabajos` (2B) | administrador, supervisor |
+| `POST /whatsapp/simulacion/entrante`, `POST /whatsapp/simulacion/mensajes/{id}/estado` (2B) | cualquier usuario activo; solo con `WHATSAPP_PROVEEDOR=falso` y `ENTORNO` distinto de `produccion`; si no, 404 |
+| `GET /exclusiones?canal=` (2B) | administrador, supervisor (filtro por canal `todos`, `voz` o `whatsapp`) |
 
 `POST /campanas/{id}/importaciones` y `POST /exclusiones/importar` aceptan `.csv` y `.xlsx` desde 2A.
 
@@ -182,6 +234,12 @@ Contratos completos en `docs/arquitectura/fase-1.md` (§4) y, para la subfase 2A
 4. Todos los eventos tienen la forma `{"tipo", "datos", "emitido_en"}`:
    - `agente.estado`, `llamada.estado`: a administradores, supervisores y al propio agente.
    - `consola.registro`: a todos los conectados (solo ids).
+   - `conversacion.mensaje` y `conversacion.estado` (2B): a administradores y supervisores siempre; al agente solo si
+     la conversación es suya o lo era (`usuario_anterior_id`).
+   - `atencion.cola` (2B): a todos los conectados, con solo ids (`cola_id`, `conversacion_id`, `campana_id`, `motivo`,
+     `accion`). El filtrado por campañas asignadas llega en 2G.
+   - `trabajo.fallido` (2B): solo a administradores y supervisores (`trabajo_id`, `tipo`, `codigo`).
+   - Ningún evento contiene texto de mensajes ni números de teléfono.
 5. Los eventos se publican **dentro de la transacción** y se entregan solo tras confirmarla. Un rollback no emite nada.
    Con PostgreSQL usan `pg_notify` y `LISTEN`. Con SQLite o en tests, un bus en memoria.
 6. El estado autoritativo está en la base de datos. Al reconectar, el cliente recarga por REST.
@@ -238,3 +296,25 @@ del evaluador de cumplimiento van en `America/Bogota` (`-05:00`).
 - Los teléfonos de `/consola/*` se devuelven enmascarados (`numero_mascara`). Nunca se devuelve un E.164 completo.
 - Las llamadas se comprueban con `evaluar_contacto` (horario y frecuencia) en el servidor, antes de cada `<Dial>`.
   Ver [`docs/cumplimiento-frecuencia.md`](../docs/cumplimiento-frecuencia.md).
+
+**WhatsApp, conversaciones y trabajos (2B).**
+- Los webhooks de WhatsApp validan `X-Twilio-Signature` con la URL `PUBLIC_BASE_URL + ruta + query`. Firma inválida →
+  `403 FIRMA_INVALIDA`. El entrante persiste y encola; el procesamiento lo hace el worker. Un `MessageSid` repetido no
+  crea nada.
+- Los envíos aceptan una `idempotencia_clave` (UUID v4) para no duplicar un mensaje si se repite la petición: en
+  `POST .../mensajes` y en `POST .../plantillas`. Repetirla devuelve el resultado existente (`200`) o `409 IDEMPOTENCIA_CONFLICTO`.
+- Una plantilla bloqueada por cumplimiento responde `200` con `permitido=false` y sus motivos. No es un error HTTP.
+- Códigos de negocio nuevos (2B): `CONVERSACION_NO_ASIGNADA` (403), `CAMPANA_NO_ASIGNADA` (403),
+  `CONVERSACION_ASIGNADA`, `CONVERSACION_CERRADA`, `CONVERSACION_YA_VINCULADA`, `CONVERSACION_ABIERTA_OTRO_REGISTRO`,
+  `VENTANA_CERRADA`, `VENTANA_ABIERTA`, `RESPUESTA_FUERA_DE_FRANJA`, `CLIENTE_OPT_OUT`, `WHATSAPP_NO_HABILITADO`,
+  `CAPACIDAD_MAXIMA`, `AGENTE_NO_DISPONIBLE`, `AUTORIZACION_DUPLICADA`, `AUTORIZACION_REVOCADA_POR_OPT_OUT`,
+  `PLANTILLA_NO_DISPONIBLE`, `PLANTILLA_VARIABLE_VACIA`, `PLANTILLA_MAPEO_INVALIDO`, `PLANTILLA_SIN_BAJA`,
+  `TELEFONO_NO_VALIDO`, `REGISTRO_NO_COINCIDE`, `RESULTADO_INCOHERENTE`, `REGISTRO_NO_RESERVADO` (409, 422, 403 según el
+  caso), `MEDIA_DEMASIADO_GRANDE` (413), `MEDIA_NO_DISPONIBLE` (404), `DEMASIADAS_DESCARGAS` (429) y
+  `PROVEEDOR_NO_DISPONIBLE` (502). Tabla completa en [`docs/whatsapp-twilio.md`](../docs/whatsapp-twilio.md) y
+  `docs/arquitectura/fase-2b.md`, sección 4.1.
+- Los medios entrantes no se guardan: se descargan por un proxy autenticado, con validación de la URL (prefijo exacto
+  de la cuenta), límite de tamaño y de concurrencia y cabeceras de seguridad.
+- El texto hostil (NUL o sustitutos Unicode) se rechaza en toda la API con `422 VALIDACION` y se limpia en los webhooks.
+- Los trabajos (`trabajos`) solo guardan ids y catálogos, nunca texto ni números. Ver
+  [`docs/whatsapp-twilio.md`](../docs/whatsapp-twilio.md), sección 4.

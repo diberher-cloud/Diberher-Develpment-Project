@@ -8,6 +8,40 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ### Añadido
 
+Subfase 2B: WhatsApp con Twilio y bandeja humana.
+
+- Proveedor de WhatsApp tras la interfaz `ProveedorWhatsApp`, con implementación de Twilio (mensajes, Content API y
+  medios) y una falsa para desarrollo. Se elige con `WHATSAPP_PROVEEDOR`.
+- Webhooks firmados: entrante (`POST /api/v1/whatsapp/webhooks/entrante`) y estado de entrega
+  (`POST /api/v1/whatsapp/webhooks/estado`). Son idempotentes: un `MessageSid` repetido no crea nada.
+- Cola de trabajos en la base de datos (tabla `trabajos`) y worker `python -m app.worker`, con latido, `--healthcheck`,
+  reintentos con espera exponencial, recuperación de bloqueos y purgas periódicas. Servicio `worker` en
+  `docker-compose.yml`. Guía: `docs/whatsapp-twilio.md`.
+- Conversaciones y mensajes con resolución determinista del registro de campaña, ventana de 24 h y estados de entrega
+  monótonos (`enviado`, `entregado`, `leido`, `fallido`).
+- Bandeja humana (`/bandeja`): cola de atención, tomar siguiente, tomar, asignar, liberar, respuesta de texto dentro de
+  la ventana, plantilla fuera de ella, vincular registro, cerrar con tipificación y ficha del cliente. Capacidad máxima
+  por agente (`ATENCION_MAX_CONVERSACIONES_AGENTE`).
+- Plantillas de WhatsApp (`/whatsapp/plantillas`): sincronización desde la Content API, mapeo de variables a una lista
+  blanca, finalidad y activación.
+- Autorizaciones de WhatsApp (opt-in, `/autorizaciones`): alta con evidencia, revocación y registro desde la
+  conversación. Importación con las columnas `autoriza_whatsapp` y `fecha_autorizacion_whatsapp`.
+- Opt-out determinista (listas de frases, patrones y botón de baja) y manual, con alcances `whatsapp`, `todos` y `voz`.
+- Exclusiones por canal (`todos`, `voz` o `whatsapp`) en la API, en la carga de archivos y en la página de Exclusiones.
+- Medios entrantes por proxy autenticado (`GET /api/v1/conversaciones/{id}/mensajes/{mensaje_id}/media/{indice}`), sin
+  almacenar el binario.
+- Plantilla individual desde la ficha de la consola (`POST /api/v1/consola/registros/{id}/whatsapp/plantilla`) e
+  insignia de WhatsApp por teléfono.
+- Simulador de WhatsApp fuera de producción (`/api/v1/whatsapp/simulacion/*` y la página `/whatsapp/simulador`).
+- Tiempo real: eventos `conversacion.mensaje`, `conversacion.estado`, `atencion.cola` y `trabajo.fallido`. Estado del
+  worker en Supervisión (`GET /api/v1/supervision/trabajos`).
+- Campañas con `whatsapp_habilitado` y `plantilla_inicial_id`.
+- Migración `0003_whatsapp_bandeja`.
+- Variables de entorno `WHATSAPP_*`, `WORKER_*`, `PURGA_EVENTOS_HUERFANOS_DIAS`, `CONVERSACION_INACTIVIDAD_HORAS` y
+  `ATENCION_MAX_CONVERSACIONES_AGENTE`.
+- Documentación: `docs/whatsapp-twilio.md` (configuración, worker y solución de problemas) y `docs/bandeja-whatsapp.md`
+  (guía para agentes y supervisores).
+
 Subfase 2A: consola del agente humano con voz Twilio.
 
 - Asignación de agentes a campañas (`GET/PUT /api/v1/campanas/{id}/agentes`) y pestaña **Agentes** del detalle de campaña.
@@ -66,6 +100,23 @@ Fase 1 de la plataforma de campañas outbound.
 
 ### Cambiado
 
+Subfase 2B:
+
+- La frecuencia de contacto cuenta las plantillas de WhatsApp como intento de contacto de la empresa (`canal
+  whatsapp_mensaje`). Se registran siempre al permitirse, también cuando reutilizan una conversación abierta. Las
+  respuestas de texto dentro de la ventana no consumen frecuencia.
+- Las exclusiones tienen canal. La voz respeta las de `todos` y `voz`; WhatsApp, las de `todos` y `whatsapp`. La unicidad
+  pasa a (número, `aplica_a`, `canal`). `creado_por` puede ser nulo cuando el origen es el sistema.
+- `docker-compose.yml`: `backend` y `worker` comparten el `.env` completo mediante `env_file` (requiere Docker Compose
+  2.24 o superior).
+- `GET /api/v1/conversaciones/{id}` audita `conversacion.ver` solo con `apertura=true`, que la bandeja envía una vez al
+  abrir la conversación.
+- `GET /api/v1/exclusiones` y `POST /api/v1/exclusiones/importar` aceptan el filtro y el campo `canal`.
+- Las columnas `autoriza_whatsapp` y `fecha_autorizacion_whatsapp` de la importación se aplican a los móviles de la fila.
+  Una autorización anterior a una baja por opt-out se omite.
+- `docs/cumplimiento-frecuencia.md`, `docs/importacion-csv.md`, `docs/pendientes.md`, `README.md` y los READMEs de
+  backend y frontend describen la subfase 2B.
+
 Subfase 2A:
 
 - La frecuencia de contacto (Ley 2300) pasa de almacenarse en la política a evaluarse en cada llamada, antes del `<Dial>`.
@@ -77,6 +128,31 @@ Subfase 2A:
 - El WebSocket de tiempo real pasa de la Fase 3 a la subfase 2A (ADR-0017).
 
 ### Seguridad
+
+Subfase 2B:
+
+- Firma de los webhooks de WhatsApp con `X-Twilio-Signature`, con la misma validación común que la voz. Firma ausente o
+  incorrecta: `403 FIRMA_INVALIDA`, sin procesar nada.
+- Anti-SSRF y path traversal en los medios: la URL debe tener el prefijo exacto de la cuenta de Twilio, sin credenciales,
+  puertos, query ni `..`. Las redirecciones no se siguen de forma automática (máximo dos saltos y solo a hosts permitidos),
+  y las credenciales solo viajan a `api.twilio.com`. Además hay límites de tamaño, de descargas simultáneas y de duración.
+- Medios sin almacenar, con `Content-Type` del tipo guardado, `X-Content-Type-Options: nosniff`,
+  `Cache-Control: private, no-store` y `Content-Security-Policy: sandbox`.
+- Saneamiento de texto hostil: los caracteres NUL y los sustitutos Unicode sueltos se rechazan en la API (`422
+  VALIDACION`) y se limpian en los webhooks.
+- Logs sin datos personales: los avisos de WhatsApp registran solo el nombre del evento. La auditoría y los eventos de
+  tiempo real no contienen texto de mensajes, teléfonos completos ni evidencias.
+- Opt-out ampliado: frases en español con coincidencia exacta tras normalizar, patrones de baja por WhatsApp, por todos
+  los canales y por voz ("no me llamen"), y el botón de baja. "Cancelar" queda fuera de la lista, porque en Colombia
+  significa pagar.
+- Revalidación antes de cada envío de plantilla: exclusión, autorización, plantilla enviable, franja y festivos. Si ya no
+  se cumple, el mensaje falla sin llamar al proveedor.
+- Autorizaciones revocadas por opt-out: una autorización con fecha anterior a la baja no se puede crear
+  (`AUTORIZACION_REVOCADA_POR_OPT_OUT`).
+- Cola robusta ante caídas: los envíos son "como mucho una vez" (un envío interrumpido se marca `ENVIO_INCIERTO` y no se
+  reenvía). Los trabajos de instancias muertas del mismo host se devuelven a la cola, y un trabajo que agota sus intentos
+  pasa a `fallido` con auditoría. La toma de trabajos usa `SKIP LOCKED` en PostgreSQL.
+- Los endpoints de simulación de WhatsApp no existen con `ENTORNO=produccion` ni con `WHATSAPP_PROVEEDOR=twilio` (404).
 
 Subfase 2A:
 
@@ -122,4 +198,6 @@ Endurecimiento tras la revisión de la Fase 1:
 
 ### Corregido
 
+- Subfase 2A (deuda): las variables de telefonía, Twilio, consola y tiempo real del `.env` no llegaban a los contenedores
+  de Docker. Ahora sí, mediante `env_file` en `backend` y `worker`.
 - Las fechas extremas y los identificadores fuera de rango en las peticiones ya no provocan errores 500.

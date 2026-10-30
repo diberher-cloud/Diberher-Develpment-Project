@@ -1,7 +1,8 @@
 # Horario y frecuencia de contacto: qué modela la plataforma
 
-> **Documento para el área jurídica.** Describe cómo la plataforma aplica el horario, los festivos y la
-> frecuencia de contacto (Ley 2300 de 2023) en las llamadas de la consola. No es asesoría legal ni
+> **Documento para el área jurídica.** Describe cómo la plataforma aplica el horario, los festivos, la
+> frecuencia de contacto, la autorización por canal y la baja (Ley 2300 de 2023) en las llamadas de la
+> consola (2A) y en WhatsApp (2B). No es asesoría legal ni
 > interpretación oficial. **Las normas se contrastaron solo con búsquedas web. Ningún abogado las ha revisado.**
 > Todas las reglas están en la configuración de la política, así que el área puede cambiarlas sin desplegar código.
 > Las preguntas abiertas están en la sección 10.
@@ -13,8 +14,8 @@ Referencias técnicas: [ADR-0002](arquitectura/adr-0002-motor-cumplimiento-confi
 Índice: [1. Resumen](#1-resumen) · [2. Normas modeladas](#2-normas-modeladas) ·
 [3. Configuración de la política](#3-configuración-de-la-política) · [4. Horario y festivos](#4-horario-y-festivos) ·
 [5. Cómo se cuentan los contactos](#5-cómo-se-cuentan-los-contactos) · [6. Cuándo se comprueba](#6-cuándo-se-comprueba) ·
-[7. Trazabilidad](#7-trazabilidad) · [8. Exclusiones](#8-exclusiones-rne-y-números-erróneos) ·
-[9. Límites de 2A](#9-qué-no-hace-la-plataforma-en-2a) · [10. Supuestos y preguntas abiertas](#10-supuestos-y-preguntas-abiertas)
+[7. Trazabilidad](#7-trazabilidad) · [8. Exclusiones y bajas por canal](#8-exclusiones-rne-y-números-erróneos) ·
+[9. Límites](#9-qué-no-hace-la-plataforma) · [10. Supuestos y preguntas abiertas](#10-supuestos-y-preguntas-abiertas)
 
 ---
 
@@ -34,10 +35,10 @@ Referencias técnicas: [ADR-0002](arquitectura/adr-0002-motor-cumplimiento-confi
 | Norma | Qué modela la plataforma | Estado |
 |---|---|---|
 | **Ley 2300 de 2023, art. 3** (lectura adoptada en ADR-0012) | Franjas de contacto de lunes a viernes de 07:00 a 19:00 y sábados de 08:00 a 15:00. No hay contacto en domingos ni festivos. Tras un contacto directo, no más de un contacto el mismo día ni por varios medios en la misma semana. | Modelada como configuración. La lectura **no está validada**. |
-| **Ley 2300 de 2023, art. 2** | Solo se contacta por los canales que el consumidor autorice. | En 2A solo hay llamadas de voz. La autorización de canal (opt-in) llega con WhatsApp (2B). |
+| **Ley 2300 de 2023, art. 2** | Solo se contacta por los canales que el consumidor autorice. | Desde 2B, las plantillas de WhatsApp (contacto iniciado por la empresa) exigen una autorización vigente por canal y finalidad (sección 8). |
 | **Parágrafo del art. 3** (lectura adoptada en ADR-0012) | Extiende las franjas a otros medios (mensajería por aplicaciones, correo, SMS y llamadas comerciales). | Se aplica a WhatsApp desde 2B. **Lectura pendiente.** |
 | **Ley 51 de 1983** (festivos colombianos) | Calcula los festivos (fijos, trasladables al lunes y basados en Pascua) y los guarda en una tabla editable. | Implementado. Ver sección 3.3. |
-| **Registro de Números Excluidos (RNE, CRC)** | Excluye los números inscritos. Las exclusiones se cargan desde un archivo. | Carga manual en 2A. No consulta el webservice. |
+| **Registro de Números Excluidos (RNE, CRC)** | Excluye los números inscritos. Las exclusiones se cargan desde un archivo. | Carga manual (desde 2A) y por canal (desde 2B). No consulta el webservice. |
 | **Ley 1581 de 2012** (Habeas Data) | Aviso de grabación al cliente antes de unir al agente. | El aviso existe. **Su texto debe aprobarlo el área jurídica.** |
 
 **Cómo se contrastaron las normas.** Solo con búsquedas web. No se ha consultado el texto oficial publicado ni
@@ -63,8 +64,8 @@ políticas guardadas antes de la subfase 2A siguen siendo válidas: los campos n
 | `frecuencia.semana` | `calendario` o `movil_7_dias` | `calendario` | Ventana semanal (sección 5.4). |
 | `frecuencia.solo_tras_contacto_directo` | Booleano | `true` | Si es `true`, la frecuencia solo se limita tras un contacto directo en la ventana. |
 | `frecuencia.contar_intentos_sin_contacto` | Booleano | `true` | Si es `true`, los intentos sin contacto directo también cuentan. |
-| `entrantes.responder_fuera_de_franja` | Booleano | `true` | Permite responder a un contacto iniciado por el cliente fuera de franja. Sin uso en 2A. |
-| `entrantes.establecen_contacto_directo` | Booleano | `true` | Un contacto iniciado por el cliente cuenta como contacto directo. Sin uso en 2A. |
+| `entrantes.responder_fuera_de_franja` | Booleano | `true` | Permite responder a un contacto iniciado por el cliente fuera de franja. Se usa en WhatsApp desde 2B (sección 6). |
+| `entrantes.establecen_contacto_directo` | Booleano | `true` | Un contacto iniciado por el cliente cuenta como contacto directo. Se usa en WhatsApp desde 2B. |
 
 Ningún campo admite claves adicionales (`extra="forbid"`). El valor por defecto completo es el de la
 función `politica_por_defecto()` (`backend/app/modulos/cumplimiento/politica.py`).
@@ -122,6 +123,19 @@ Al tipificar la llamada, el intento recibe la marca de **contacto directo**:
 | `volver_a_llamar` | Lo indica el agente |
 | Sin tipificar (llamada en curso o pendiente) | No, de momento |
 
+### 5.1.1 Intentos de WhatsApp (desde 2B)
+
+| Hecho | Intento de contacto | Contacto directo |
+|---|---|---|
+| **Plantilla permitida** por cumplimiento (desde la consola o desde la bandeja) | Sí, siempre. Canal `whatsapp_mensaje`, iniciado por la empresa. Se registra también cuando reutiliza una conversación abierta. | No, al crearla. |
+| **Plantilla bloqueada** (`permitido=false`) | No. | — |
+| **Texto libre o respuesta** del agente dentro de la ventana | No. Las respuestas no consumen frecuencia. | — |
+| **Primer mensaje del cliente** en una conversación que empezó la empresa con una plantilla | Ya consta el intento de la plantilla. | Sí. Pasa a contacto directo al llegar la respuesta del cliente. |
+| **Mensaje del cliente** que abre una conversación con registro reconocido | Se registra un intento `iniciado_por=cliente`. | Sí, con la política por defecto (`establecen_contacto_directo=true`). |
+
+Un intento de plantilla se registra en el momento en que se permite el envío. Si el envío falla después
+(por ejemplo, un error del proveedor o un envío incierto), el intento ya consta.
+
 ### 5.2 Quién cuenta: el cliente y el tipo de campaña
 
 - El historial es **global por cliente** (documento), no por campaña.
@@ -134,7 +148,8 @@ Al tipificar la llamada, el intento recibe la marca de **contacto directo**:
 - **Contable:** un intento iniciado por la empresa que sea contacto directo o, si `contar_intentos_sin_contacto`
   es `true`, cualquier intento de la empresa.
 - Los intentos iniciados por el cliente **no consumen cupo**. Sí establecen contacto directo si
-  `entrantes.establecen_contacto_directo` es `true`. En 2A no existen contactos iniciados por el cliente.
+  `entrantes.establecen_contacto_directo` es `true`. Desde 2B existen, en WhatsApp, cuando el cliente escribe y
+  su número tiene un registro reconocido (sección 5.1.1).
 
 ### 5.4 Ventana semanal
 
@@ -154,6 +169,11 @@ Al tipificar la llamada, el intento recibe la marca de **contacto directo**:
 
 Con la política por defecto (`max_contactos_dia = 1`, `max_canales_semana = 1`), tras un contacto directo
 por voz no se puede contactar por voz otra vez ese día, ni por WhatsApp esa semana.
+
+**Consecuencia para las plantillas.** Con la política por defecto, una plantilla **sin respuesta del
+cliente** no limita por sí sola a la siguiente plantilla del mismo día: el umbral de contacto directo no
+se alcanza (regla 1). Cuando el cliente responde, las plantillas de la semana cuentan y limitan los contactos
+del día siguiente y los de otro medio. Ver la pregunta abierta de la sección 10.3.
 
 ### 5.6 Ejemplos
 
@@ -181,9 +201,14 @@ llamada del viernes a las 10:00 **sí** se permite, porque `solo_tras_contacto_d
 | **Ficha del cliente** (`GET /consola/registros/{id}`) | Servidor, en cada consulta | Informativo. Muestra los motivos por teléfono. No impide nada por sí mismo. |
 | **Fecha de rellamada** (`volver_a_llamar_en`) | Servidor, al tipificar | Valida solo el **horario**, no la frecuencia. Si la fecha queda fuera de franja, se rechaza con la próxima ventana. |
 | **Tras `no_contesta`** | Servidor, al tipificar | Propone el próximo intento en la **próxima ventana de horario**, no de frecuencia. La comprobación real ocurre al llamar. |
+| **Plantilla de WhatsApp, al crearla** (consola o bandeja) | Servidor, en la misma transacción | Si no se permite, `permitido=false` con todos los motivos. No es un error HTTP. Se audita `whatsapp.plantilla_bloqueada`. |
+| **Plantilla de WhatsApp, al enviarla** (trabajo del worker) | Servidor, en el momento del envío | Revalida exclusión, autorización, plantilla enviable, franja y festivos. Si ya no se cumple, el mensaje queda `fallido` **sin llamar al proveedor** (`CLIENTE_OPT_OUT`, `CONTACTO_NO_PERMITIDO`, `PLANTILLA_NO_ENVIABLE` o `FUERA_DE_FRANJA`). La frecuencia **no** se vuelve a evaluar al enviar. |
+| **Respuesta de texto del agente** | Servidor, al escribir y al enviar | Ventana de 24 h, opt-out posterior al último mensaje del cliente y franja según `responder_fuera_de_franja`. Solo horario: no mira la frecuencia. |
+| **Mensaje entrante del cliente** | Servidor (worker) | **Nunca se rechaza** por cumplimiento. Lo que se limita es lo que la empresa responde. |
 | **Interfaz** | Navegador | No decide nada. Solo muestra. |
 
-En 2A no hay marcador automático ni envío masivo. Cada llamada la inicia una persona desde la consola.
+En 2A no hay marcador automático ni envío masivo. Cada llamada la inicia una persona desde la consola. Desde
+2B, las plantillas de WhatsApp las envía una persona desde la bandeja o la consola. El envío masivo llega en 2E.
 
 ---
 
@@ -209,21 +234,109 @@ En 2A no hay marcador automático ni envío masivo. Cada llamada la inicia una p
 - **Comprobación:** el número excluido para el tipo de campaña bloquea la llamada (`EXCLUIDO`). Se comprueba
   antes de la frecuencia.
 - En 2A **no** se consulta el webservice del RNE. La lista se mantiene a mano desde archivos.
+
+**Exclusiones por canal (desde 2B).** Cada exclusión tiene un `canal`:
+
+| `canal` | Bloquea la voz | Bloquea WhatsApp |
+|---|---|---|
+| `todos` (por defecto) | Sí | Sí |
+| `voz` | Sí | No |
+| `whatsapp` | No | Sí |
+
+Cada exclusión tiene además un `origen`: `usuario` (alta manual o importación), `sistema` (baja determinista
+de WhatsApp o de voz) o `agente_ia` (reservado para 2C). La carga de archivos acepta el campo `canal` (por defecto
+`todos`). No puede haber dos exclusiones iguales para el mismo número, alcance y canal.
+
+**Bajas (opt-out) registradas como exclusión** (`motivo=solicitud_titular`, `aplica_a=todas`):
+
+- Baja de WhatsApp (`canal=whatsapp`): "stop", "no me escriban", el botón de baja, etc. (sección 8.1).
+- Baja de todos los canales (`canal=todos`): "no me contacten", "no me llamen ni me escriban", etc.
+- Baja de voz (`canal=voz`): "no me llamen". No cierra la conversación de WhatsApp.
+
+Una baja de WhatsApp también revoca las autorizaciones de WhatsApp vigentes del número (`motivo_revocacion=opt_out`).
+Una exclusión posterior al último mensaje del cliente bloquea las respuestas de texto de la empresa en esa
+conversación, pero no crea ningún contacto nuevo.
+
+**Número errado.** Al tipificar `numero_errado` desde la bandeja o la consola, la exclusión se crea con
+`canal=todos`. Además, el número no vuelve a resolverse a registros de campaña.
 - Pregunta abierta: si las ofertas a clientes con relación contractual vigente son comerciales y están sujetas al
   RNE. Por defecto, sí (ver `docs/pendientes.md`, sección 1).
 
 ---
 
-## 9. Qué no hace la plataforma en 2A
+### 8.1 Bajas por texto (opt-out determinista)
 
-- No verifica la **autorización del consumidor** para cada canal (opt-in). Llega con WhatsApp (2B).
+El mensaje del cliente se revisa **sin IA** y con coincidencia **exacta** tras normalizar: minúsculas, sin tildes,
+signos ni emojis, y sin saludos o cortesías al principio o al final (`hola`, `buenas`, `buenos días`, `buenas
+tardes`, `por favor`, `porfa`, `gracias`, `muchas gracias`). El texto no puede superar 80 caracteres. Nunca se busca
+una frase dentro de otra.
+
+Alcances posibles: `whatsapp`, `todos` y `voz`. Un botón de baja (`ButtonPayload` igual a `WHATSAPP_PAYLOAD_BAJA`,
+por defecto `BAJA`) equivale siempre a `whatsapp`.
+
+**Lista por defecto de WhatsApp** (alcance `whatsapp`): `stop`, `parar`, `detener`, `baja`, `dar de baja`, `darme de
+baja`, `de baja`, `unsubscribe`, `no me escriban`, `no me escriban mas`, `no me escriba mas`, `no escriban mas`, `no mas
+mensajes`, `no quiero mas mensajes`, `no quiero recibir mas mensajes`, `no me envien mas mensajes`, `no envien mas
+mensajes`, `dejen de escribirme`, `no me vuelvan a escribir`.
+
+**Lista por defecto de todos los canales** (alcance `todos`): `no me contacten`, `no me contacten mas`, `no me vuelvan a
+contactar`, `no vuelvan a contactarme`, `no quiero que me contacten`, `no me llamen ni me escriban`, `no me llamen ni
+me escriban mas`.
+
+**Excluidas a propósito:** `cancelar` (en Colombia significa pagar), `no` y `salir`.
+
+**Patrones** (coincidencia completa sobre el texto normalizado). Además de las listas:
+
+- *WhatsApp:* "no me contacten (nunca) (más) por whatsapp / este medio / este chat / aquí"; "no me escriban / escribas /
+  escriba / manden / envíen … (nunca, ya, más, mensajes, msj, whatsapp)"; "quiero / deseo / necesito / solicito /
+  quisiera dar de baja" o "darme de baja" o "que me den de baja"; "pueden / podrían / puede … darme de baja"; "den /
+  dar / deme / dame de baja"; "stop all"; "sáquenme / sácame / sacarme de la lista (de mensajes, difusión o
+  contactos)"; "quiero / necesito salir de la lista" o "que me saquen de la lista".
+- *Todos los canales:* "no me contacten (nunca) (más) por ningún medio / canal / vía / lado / parte" (también con el
+  orden invertido); "no me contacten (nunca) (más) (ya)"; "no me vuelvan a contactar (nunca)".
+- *Voz* (siempre activos): "no me llamen (nunca) (más) (ya)"; "no me vuelvan a llamar (nunca)"; "no me llamen más por
+  teléfono". Resultan alcance `voz`.
+
+**Configuración.** `WHATSAPP_FRASES_OPT_OUT` y `WHATSAPP_FRASES_OPT_OUT_TODOS` (frases separadas por `|`) sustituyen
+la lista por defecto de su alcance. Si se define **cualquiera** de las dos, se desactivan los **patrones** de WhatsApp
+y de todos los canales (los de voz siguen activos). Estas variables se describen en `docs/whatsapp-twilio.md`,
+sección 3.1. Cambiarlas exige reiniciar la aplicación.
+
+**Ejemplos** (con la configuración por defecto):
+
+| Texto del cliente | Alcance |
+|---|---|
+| `STOP` · `stop!!!` · `Stop` seguido de un emoji | `whatsapp` |
+| `Darme de baja` (o el botón de baja) | `whatsapp` |
+| `Por favor no me escriban más, gracias.` | `whatsapp` |
+| `no me contacten más` | `todos` |
+| `Buenos días, no me contacten` | `todos` |
+| `No me llamen ni me escriban` | `todos` |
+| `No me llamen` | `voz` |
+| `quiero cancelar la deuda` · `cancelar` · `no` · `stopped` | ninguno |
+| `no me escriban mañana sino el lunes` | ninguno (no es coincidencia completa) |
+| `¿Baja el precio?` | ninguno |
+
+**Efecto de una baja.** Ver la sección 8 (exclusión por canal) y `docs/bandeja-whatsapp.md`, sección 10.2. Si el
+cliente vuelve a escribir después, la empresa puede responder en esa conversación, pero no iniciar plantillas
+(supuesto S-B3, sección 10.3).
+
+## 9. Qué no hace la plataforma
+
+- **Autorización por canal (desde 2B).** Se exige para las plantillas de WhatsApp. Las llamadas de voz de 2A no
+  verifican autorización de canal.
 - No modela **excepciones de horario** por autorización del consumidor.
-- No tiene marcador automático, reintentos automáticos ni marcación predictiva (Fase 3).
-- No aplica **plazos de conservación** de grabaciones ni de datos (Fase 2F y 5).
+- No tiene marcador automático, reintentos automáticos ni marcación predictiva (Fase 3). Tampoco envíos masivos
+  de WhatsApp (2E).
+- No envía **adjuntos** desde la bandeja (solo recibe y muestra).
+- No aplica **plazos de conservación** de grabaciones, transcripciones ni de medios (Fases 2F y 5). Los medios
+  entrantes no se guardan en la plataforma. Su conservación en Twilio no está verificada (ver la sección 10.3).
 - No cuenta la frecuencia **por campaña**: la regla es por cliente y tipo de campaña (sección 5.2).
 - Los festivos calculados siguen solo la Ley 51 de 1983. Son editables, pero no provienen de una tabla oficial.
 - **Aviso de grabación.** Solo se reproduce si `TELEFONIA_GRABAR` es `true`. Si se desactiva la grabación,
   también se desactiva el aviso. Si la norma exige el aviso con independencia de la grabación, debe corregirse.
+- **Agente de IA.** Hasta la subfase 2C, las respuestas las escribe una persona. El opt-out por texto de la IA
+  (herramienta) y su aviso de asistente virtual llegan en 2C.
 
 ---
 
@@ -268,6 +381,36 @@ Se adoptan para desarrollar la plataforma. Cambian con coste bajo.
 - Contenido permitido en **plantillas de cobranza** (sin montos por defecto) y si el primer contacto puede
   mencionar que existe una deuda. (Subfase 2D.)
 - ¿Varias obligaciones por cliente en la misma campaña? Afecta a la consulta de obligaciones (S2 de Fase 1).
+
+### 10.3 Supuestos de la subfase 2B (WhatsApp)
+
+Se adoptan para desarrollar la mensajería. Cambian con coste bajo. Tomados de
+[`fase-2b.md`](arquitectura/fase-2b.md), sección 7.1.
+
+| Id | Supuesto | Relevancia legal |
+|---|---|---|
+| **S-B1** | Responder fuera de franja a quien escribe primero está **permitido por defecto** (`responder_fuera_de_franja=true`). Con `false`, la respuesta se retiene hasta la próxima franja si cabe en la ventana; si no, se rechaza. Los mensajes **automáticos** (confirmación de baja, aviso de espera y de fuera de franja) se envían solo dentro de la ventana. Sin campaña se aplica la política más restrictiva de las dos. | **Alta.** Ver la pregunta legal de abajo. |
+| **S-B2** | El mensaje entrante autoriza a responder en esa conversación, pero **no** a enviar plantillas futuras. Las plantillas exigen una autorización vigente de la finalidad. | Alta. |
+| **S-B3** | La baja por WhatsApp crea una exclusión `canal=whatsapp`, `aplica_a=todas`. Las frases de "no me contacten" crean `canal=todos`. Se revocan las autorizaciones. Un cliente que se da de baja y vuelve a escribir puede recibir respuesta en esa conversación, pero no plantillas. | Alta. |
+| **S-B4** | Las conversaciones sin campaña solo las atienden supervisores y administradores. Los agentes no ven los números sin campaña. | Baja. |
+| **S-B5** | Capacidad de 5 conversaciones abiertas por agente. Solo puede tomar conversaciones quien está en estado disponible. La pausa conserva sus conversaciones; desconectado las devuelve a la cola. | Ninguna. Operativo. |
+| **S-B6** | Una plantilla **no** suma a los intentos del registro de campaña (los que cuentan para la gestión del agente). Ese contador se incrementa al tipificar el cierre. La frecuencia legal sí cuenta la plantilla como intento de contacto (sección 5.1.1). Cerrar exige tipificación si hay registro. El cierre por inactividad no tipifica. | Media. |
+| **S-B7** | Medios: solo imagen (JPEG, PNG, WebP), audio (OGG, MPEG, MP4, AAC, AMR) y PDF, hasta 16 MiB, por proxy sin almacenar. Sin medios salientes en 2B. | Media. Afecta a la minimización. |
+| **S-B8** | Las variables de plantilla solo pueden ser de la lista blanca (`primer_nombre`, `empresa`, `agente`, `producto`). Nunca montos ni datos de la deuda. | Alta para cobranza. |
+
+**Preguntas legales de la subfase 2B** (de [`fase-2b.md`](arquitectura/fase-2b.md), sección 7.2):
+
+- Validar **S-B1**, en especial los mensajes automáticos fuera de franja. Si la Ley 2300 obliga a respetar la franja
+  también en las respuestas, poner `responder_fuera_de_franja=false` en todas las políticas.
+- Validar **S-B3** (alcance de la baja por WhatsApp).
+- ¿Basta la columna `autoriza_whatsapp` de una base de datos con fecha como **evidencia válida** de autorización? (La
+  importación la acepta con `fecha_autorizacion_whatsapp`.) ¿Qué evidencia vale para las plantillas: columna,
+  cláusula contractual o aceptación en el chat?
+- ¿El RNE excluye también las **respuestas** a conversaciones iniciadas por el cliente? Hoy no las bloquea, solo lo
+  indica con una alerta.
+- Conservación de los medios en Twilio (retención en la subfase 2F).
+- Con la política por defecto, una plantilla sin respuesta del cliente no limita a la siguiente del mismo día
+  (sección 5.5). ¿Es la lectura deseada?
 
 Las preguntas de negocio y los requisitos externos (Twilio, Meta, Anthropic) están en
 [`pendientes.md`](pendientes.md), secciones 5 y 6.

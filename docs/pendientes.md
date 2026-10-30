@@ -111,16 +111,9 @@ validar en el repositorio, sin Twilio real, aparece aquí con su alcance.
 - **Validación con Twilio real de la firma a través del túnel y del aviso de grabación.** Comprobar que la firma
   válida pasa con la URL pública exacta, que el aviso de grabación se oye antes de unir al agente y que la
   grabación dual se guarda. Ver [`telefonia-twilio.md`](telefonia-twilio.md), apartados «Firma de los webhooks» y «Configuración de Twilio paso a paso» (paso 7).
-- **`docker-compose.yml` no pasa las variables de telefonía.** Ninguna de las `TELEFONIA_*`, `TWILIO_*`,
-  `PUBLIC_BASE_URL`, `CONSOLA_*`, `PROMESA_MAX_DIAS`, `WS_REVALIDAR_SEGUNDOS` ni `BUS_EVENTOS` está en el servicio
-  `backend`. Con Docker no llegan al contenedor aunque estén en el `.env` de la raíz. Añadirlas a `environment`.
-  La subfase 2A no modificó `docker-compose.yml`.
 - **Aviso de grabación ligado a `TELEFONIA_GRABAR`.** Con `TELEFONIA_GRABAR=false` no hay aviso. Decidir con el área
   jurídica si el aviso debe existir con independencia de la grabación. Ver
   [`cumplimiento-frecuencia.md`](cumplimiento-frecuencia.md), sección 9.
-- **Documentación de arquitectura desactualizada.** ADR-0003 dice `incoming_allow=true` y la implementación usa
-  `False` en 2A. ADR-0017 menciona `GET /api/v1/ws?token=` y la revisión B3 lo sustituyó por tickets
-  (`POST /api/v1/ws/ticket`). Los documentos de `docs/` siguen el código. Corregir los ADR es tarea del arquitecto.
 - **Tiempos del WebSocket.** `WS_REVALIDAR_SEGUNDOS` (60) y la cola de 1000 eventos por conexión son valores sin
   prueba de carga. Medir con varias conexiones (subfase 2F).
 
@@ -183,7 +176,98 @@ preguntas legales están en [`cumplimiento-frecuencia.md`](cumplimiento-frecuenc
 **Técnicos**
 
 - Exactitud de la guarda de montos del agente IA (falsos positivos). Medir en la evaluación de 2C.
-- `LISTEN/NOTIFY` con varias instancias de la API. El worker necesitará su propio healthcheck (2B).
-- Importación síncrona (hasta 50 000 filas). Si las bases crecen, pasarla a la cola de trabajos de 2B.
+- `LISTEN/NOTIFY` con varias instancias de la API. El worker ya tiene su healthcheck desde 2B (`python -m app.worker --healthcheck`).
+- Importación síncrona (hasta 50 000 filas). Si las bases crecen, pasarla a la cola de trabajos. En 2B no se hizo.
 - Deuda de seguridad de Fase 1 (sección 3) programada en 2F. Si la plataforma se expone a Internet antes, adelantar
   el límite de intentos de login.
+
+---
+
+## 7. Subfase 2B: deudas cerradas, pendientes y preguntas
+
+**Cerradas en 2B**
+
+- `docker-compose.yml`: `backend` y `worker` comparten `env_file` con el `.env` de la raíz, así que llegan las
+  variables de telefonía, Twilio, `PUBLIC_BASE_URL`, consola, tiempo real, WhatsApp, worker y purgas. Requiere Docker
+  Compose 2.24 o superior. Ver [`whatsapp-twilio.md`](whatsapp-twilio.md), sección 2.6.
+- Servicio `worker` con healthcheck (`python -m app.worker --healthcheck`) y `stop_grace_period`.
+- ADR-0003 y ADR-0017 actualizados a lo implementado en 2A (`incoming_allow=False` en 2A; tickets para el WebSocket).
+
+**Pendientes técnicos de 2B**
+
+- **Host del redirect de medios sin verificar.** `WHATSAPP_HOSTS_MEDIOS` (por defecto `media.twiliocdn.com`) no se ha
+  comprobado con una cuenta real. Ver [`whatsapp-twilio.md`](whatsapp-twilio.md), sección 1.7.
+- **Firma por túnel sin verificar.** Comprobar con un mensaje real que `X-Twilio-Signature` pasa con la URL pública
+  exacta, y que Twilio respeta `#rc=3&rp=ct,rt,5xx`. Ver [`whatsapp-twilio.md`](whatsapp-twilio.md), sección 2.4.
+- **Content API.** Verificar con una cuenta real los nombres de los campos de `content_and_approvals`, y las categorías
+  y estados de aprobación, en la versión del SDK instalada (`twilio>=9.3,<10`). Hoy el adaptador se prueba sin red.
+- **Prueba manual guiada de 2B** con credenciales: mensaje real, respuesta dentro de la ventana, plantilla fuera de
+  ella, `STOP`, imagen y PDF, estados `delivered` y `read`, y firma a través del túnel.
+- **`atencion.cola` llega a todos los agentes conectados**, con solo ids. El filtro por campañas asignadas llega en 2G.
+- **Temporizador de desconexión no multiinstancia** (ver la sección 5). En 2B es más grave: al desconectarse, un agente
+  devuelve sus conversaciones a la cola.
+- **`ENVIO_INCIERTO` sin identificador de Twilio.** Si el envío se da por incierto, el mensaje no tiene `MessageSid`. El
+  agente comprueba con el cliente, a mano (ver [`whatsapp-twilio.md`](whatsapp-twilio.md), sección 4.4). Valorar si hace
+  falta un procedimiento de soporte.
+- **Importación de clientes síncrona.** No usa la cola de trabajos (ver la sección 6).
+
+**Preguntas legales y de negocio de 2B.** Los supuestos S-B1 a S-B8 (fase-2b.md, §7.1) están en
+[`cumplimiento-frecuencia.md`](cumplimiento-frecuencia.md), sección 10.3. Las preguntas (fase-2b.md, §7.2) son:
+
+- *Legales:* validar S-B1 (respuestas y automáticos fuera de franja) y S-B3 (alcance de la baja por WhatsApp). Si la
+  Ley 2300 obliga a respetar la franja también en las respuestas, poner `responder_fuera_de_franja=false`. ¿Basta una
+  columna de la base con fecha como evidencia de opt-in? ¿El RNE excluye también las respuestas a conversaciones
+  iniciadas por el cliente? Conservación de los medios en Twilio (subfase 2F).
+- *Negocio:* textos de los mensajes automáticos (espera, fuera de franja, confirmación de baja); capacidad por agente
+  (5 conversaciones) y SLA de la cola; si un agente de voz puede llamar a un cliente con una conversación de WhatsApp
+  abierta atendida por otro (hoy la ficha lo informa sin bloquear); quién aprueba y mapea las plantillas; contenido
+  de las plantillas de cobranza.
+- *Técnicas:* calidad del número y bloqueos por reportes de spam; coste por mensaje (tarifa de Meta más US$0,005 de
+  Twilio, ver la sección 6).
+
+---
+
+## 8. Revisión de alcance: IA en voz (2026-10-28)
+
+Pendientes de la subfase 2D (agente de IA de voz), según [`fase-2.md`](arquitectura/fase-2.md), sección 8.3.
+
+**Supuestos a confirmar** (S-V1 a S-V9):
+
+- **S-V1.** Una llamada saliente de la IA es un contacto iniciado por la empresa, con las mismas reglas que una humana
+  (franjas, festivos, frecuencia omnicanal, RNE, exclusiones) y con el aviso de asistente virtual al inicio.
+- **S-V2.** Aviso fijo al contestar, siempre (con o sin grabación): asistente virtual, llamada grabada y monitoreada, y
+  posibilidad de pedir un asesor.
+- **S-V3.** Un acuerdo o venta verbal se registra si el cliente acepta tras la repetición explícita de las condiciones,
+  la cita consta en la transcripción, el servidor dicta la constancia y la grabación se conserva. En ventas, la
+  constancia informa del derecho de retracto. Con opt-in de WhatsApp, además una plantilla de constancia (2E).
+- **S-V4.** No se dejan mensajes en buzones de voz.
+- **S-V5.** Si quien contesta cuelga antes de verificar la identidad, el resultado es `no_contesta` sin contacto directo.
+- **S-V6.** La devolución de llamada pedida por el cliente se hace dentro de franja y no consume cupo de frecuencia
+  (configurable).
+- **S-V7.** Las campañas con `voz_modo=ia` no aparecen en la lista de trabajo humana, salvo los registros que requieren
+  humano (devoluciones).
+- **S-V8.** Voz por defecto con `claude-sonnet-5-5` y esfuerzo `low`; concurrencia por defecto 5 por campaña y 10 global;
+  1 llamada por segundo; duración máxima 15 minutos; espera de traspaso de 120 s.
+- **S-V9.** Entrantes PSTN con 0 o varios registros candidatos: pasan a un humano o a devolución. La IA no identifica
+  clientes por documento entre varios.
+
+**Verificaciones técnicas al iniciar 2D** (con cuenta Twilio de pruebas; no bloquean el desarrollo con falsos):
+
+- **V1.** Atributos exactos de `<ConversationRelay>` (saludo no interrumpible, `hints`, `speechModel`, normalización de
+  TTS) y parámetros del `action` (`HandoffData`, estado de la sesión).
+- **V2.** Código de idioma y voces de español latinoamericano y colombiano (`es-CO`, `es-419`, `es-US`) en el
+  reconocimiento y la síntesis.
+- **V3.** Si Twilio firma el *handshake* del WebSocket (`X-Twilio-Signature`) y si notifica el fin de la reproducción del TTS.
+- **V4.** Precisión del reconocimiento de cifras dictadas (documento, montos, fechas) y de DTMF.
+- **V5.** AMD asíncrono con buzones de los operadores colombianos: tasas de falso humano y falsa máquina, y coste del AMD.
+- **V6.** Latencia real de fin de habla a primer audio con Sonnet 5.5 y Haiku 5.5 con esfuerzo `low` (objetivo p50 ≤ 1,2 s,
+  p95 ≤ 2,5 s).
+
+**Bloqueos para operar 2D en producción** (no para desarrollarla): confirmación legal de las llamadas de IA (Ley 2300,
+SIC, Ley 1480 en ventas) y de S-V1 a S-V3 y S-V6; aviso de privacidad y tratamiento de la voz y las transcripciones;
+transmisión internacional a Anthropic, Twilio y sus subencargados de voz; DPA con Anthropic y Twilio; presupuesto,
+concurrencia y dotación de humanos de respaldo; y ConversationRelay habilitado en la cuenta.
+
+**Para leer la documentación de Twilio durante el trabajo de 2D**, la red de la sesión de trabajo debe permitir los
+dominios `www.twilio.com`, `static0.twilio.com` y `live.docs.dev.twilio.com`. Hasta que se permitan, la documentación
+de Twilio no se puede consultar desde la sesión.

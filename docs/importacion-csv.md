@@ -76,6 +76,37 @@ Si falta alguna de estas cuatro cabeceras, el archivo completo se rechaza con `4
 | `producto` | Texto de hasta 120 caracteres. |
 | `oferta` | Texto de hasta 2000 caracteres. |
 
+### Autorización de WhatsApp (desde 2B, opcionales)
+
+| Columna | Valores | Regla |
+|---|---|---|
+| `autoriza_whatsapp` | `si`, `sí`, `no` o vacío (sin distinguir mayúsculas) | Vacío: no hace nada. Cualquier otro valor: advertencia `AUTORIZACION_WHATSAPP_INVALIDA` y se ignora. |
+| `fecha_autorizacion_whatsapp` | `YYYY-MM-DD` o `DD/MM/YYYY` (igual que `fecha_vencimiento`) | Obligatoria con `si`. Debe existir y no ser futura (hora de Bogotá). Si falta, es inválida o es futura: advertencia `AUTORIZACION_WHATSAPP_INVALIDA` y se ignora la autorización. |
+
+Efecto, solo para los teléfonos **móviles** de la fila (`telefono_1`, `telefono_2`, `telefono_3`; los fijos se ignoran):
+
+- `si` con fecha válida: se crea una autorización de WhatsApp por cada móvil, con la finalidad de **la campaña**
+  (`venta` o `cobranza`), origen `importacion`, la evidencia `importacion:<id> fila <n>` y como fecha de otorgamiento
+  el día indicado a las 00:00 de Bogotá. Si ya hay una vigente para esa finalidad, no se duplica.
+- `no`: revoca las autorizaciones vigentes de WhatsApp de esos móviles **solo para la finalidad de la campaña**
+  (`motivo_revocacion=importacion`). Las autorizaciones de finalidad `todas` no se tocan.
+- Si el titular pidió la baja (opt-out) **después** de la fecha de autorización, esa autorización no se crea. La
+  fila se importa con la advertencia `AUTORIZACION_REVOCADA_POR_OPT_OUT`, y la autorización cuenta como ignorada.
+
+Las autorizaciones son necesarias para enviar plantillas de WhatsApp (ver [`cumplimiento-frecuencia.md`](cumplimiento-frecuencia.md)).
+Los contadores se registran en la auditoría `importacion.autorizaciones` (`creadas`, `revocadas` e `ignoradas`).
+
+```csv
+tipo_documento;numero_documento;nombre;telefono_1;telefono_2;autoriza_whatsapp;fecha_autorizacion_whatsapp
+CC;1020304050;María Pérez;300 123 4567;601 234 5678;si;2026-10-20
+CC;52111222;Juan Ruiz;3109876543;;no;
+CC;79000111;Ana Gil;3205550011;;sí;20/10/2026
+```
+
+- María: una autorización para su móvil (`telefono_1`); el fijo se ignora.
+- Juan: se revocan sus autorizaciones de la finalidad de la campaña.
+- Ana: `sí` con fecha en formato `DD/MM/YYYY`.
+
 ### Otras columnas
 
 Cualquier otra cabecera se guarda en `datos_adicionales` del registro de campaña, con el nombre
@@ -372,6 +403,8 @@ Severidad `error`: la fila es inválida y no se importa. Severidad `advertencia`
 | `TODOS_TELEFONOS_EXCLUIDOS` | advertencia | `telefono_1` | Fila excluida por completo. |
 | `TELEFONO_EXCLUIDO` | advertencia | `telefono_N` | Teléfono excluido; la fila se importa igualmente. |
 | `COLUMNAS_ADICIONALES_IGNORADAS` | advertencia | — (fila 1) | Se ignoraron columnas por número o longitud de nombre. |
+| `AUTORIZACION_WHATSAPP_INVALIDA` | advertencia | `autoriza_whatsapp` o `fecha_autorizacion_whatsapp` | Valor no reconocido, `si` sin fecha válida o fecha futura. La fila se importa sin esa autorización (desde 2B). |
+| `AUTORIZACION_REVOCADA_POR_OPT_OUT` | advertencia | `autoriza_whatsapp` | El titular pidió la baja después de la fecha indicada; la autorización se omite (desde 2B). |
 
 Los mensajes nunca incluyen el documento ni el teléfono completos (se enmascaran como `***4567`).
 
@@ -478,6 +511,7 @@ excluida, teléfono excluido parcialmente). Con `+573005550000` excluido para co
 | `archivo` | sí | CSV o XLSX con columna obligatoria `telefono`. Mismas reglas de archivo que las importaciones (extensión, codificación, delimitador, 10 MiB; en XLSX, [Excel (.xlsx)](#excel-xlsx)). Máximo 200 000 filas (`EXCLUSIONES_MAX_FILAS`). |
 | `motivo` | sí | `rne`, `solicitud_titular`, `numero_errado` o `manual`. |
 | `aplica_a` | no si `motivo=rne` | `venta`, `cobranza` o `todas`. Con `rne` y sin valor, se usa `venta`. Con otro motivo es obligatorio: si falta, `422` antes de leer el archivo. |
+| `canal` | no | `todos` (por defecto), `voz` o `whatsapp` (desde 2B). Una exclusión `voz` solo bloquea las llamadas; `whatsapp` solo los mensajes; `todos` bloquea ambos. |
 
 Respuesta `200`:
 
@@ -494,7 +528,7 @@ Respuesta `200`:
 }
 ```
 
-- Duplicada: ya existe la pareja `(numero_e164, aplica_a)` o el número se repite en el archivo.
+- Duplicada: ya existe la combinación `(numero_e164, aplica_a, canal)` o el número se repite en el archivo.
 - Inválida: el teléfono no supera la normalización (mismos códigos que en importación de clientes).
 - Los errores se limitan a 100 (`errores_truncados` indica si hubo más).
 - Todo se guarda en una transacción; un conflicto de concurrencia devuelve `409 EXCLUSION_CONCURRENTE`.
