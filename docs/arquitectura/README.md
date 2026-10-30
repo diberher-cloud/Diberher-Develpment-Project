@@ -99,6 +99,7 @@ Decisiones clave:
 | [0019](adr-0019-whatsapp-bandeja-humana.md) | WhatsApp base y bandeja humana (subfase 2B) |
 | [0020](adr-0020-agente-ia-voz-conversationrelay.md) | **Agente IA de voz** con Twilio ConversationRelay + Claude en streaming: servicio `voz-ia`, turnos, interrupciones, AMD, aviso, identidad por DTMF, traspaso, tipificación automática, latencia y coste por minuto |
 | [0021](adr-0021-marcador-automatico-voz-ia.md) | **Marcador automático IA**: concurrencia por campaña y global, ritmo, reintentos, cumplimiento y bloqueos de 2A, kill switch |
+| [0022](adr-0022-nucleo-agente-ia-turnos-y-herramientas.md) | Núcleo del agente IA (2C): turnos, historial, herramientas, acuerdos y guardas |
 
 ## 3. Módulos del backend
 
