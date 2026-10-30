@@ -7,6 +7,7 @@ import type { ErrorApi } from '../api/cliente';
 import type { Campana, EstadoCampana } from '../api/tipos';
 import { useAuth } from '../auth/AuthContext';
 import { CampanaAgentes } from '../componentes/CampanaAgentes';
+import { ConfiguracionIACampana } from '../componentes/ia/ConfiguracionIACampana';
 import { Campo } from '../componentes/Campo';
 import { Cargando } from '../componentes/Cargando';
 import { ImportarClientes } from '../componentes/ImportarClientes';
@@ -17,8 +18,8 @@ import { ETIQUETA_ACCION, ETIQUETA_ESTADO, ETIQUETA_TIPO, TRANSICIONES } from '.
 import { formatearCOP, formatearFecha, formatearFechaHora } from '../utilidades/formato';
 import { comoErrorApi, useCarga } from '../utilidades/useCarga';
 
-type Pestana = 'clientes' | 'agentes' | 'tipificaciones';
-const PESTANAS: [Pestana, string][] = [['clientes', 'Clientes'], ['agentes', 'Agentes'], ['tipificaciones', 'Tipificaciones']];
+type Pestana = 'clientes' | 'agentes' | 'tipificaciones' | 'ia';
+const PESTANAS: [Pestana, string][] = [['clientes', 'Clientes'], ['agentes', 'Agentes'], ['tipificaciones', 'Tipificaciones'], ['ia', 'Agente IA']];
 
 export function CampanaDetalle() {
   const id = Number(useParams().id);
@@ -152,6 +153,7 @@ export function CampanaDetalle() {
             )}
             {pestana === 'agentes' && <CampanaAgentes campana={campana} />}
             {pestana === 'tipificaciones' && <TipificacionesCampana campanaId={id} />}
+            {pestana === 'ia' && <ConfiguracionIACampana campana={campana} onIrAPestana={setPestana} />}
           </div>
         </>
       )}

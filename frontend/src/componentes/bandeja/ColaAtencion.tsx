@@ -20,6 +20,9 @@ interface Props {
   onCambio: (c?: Conversacion) => void;
 }
 
+/** Motivos de cola originados por la IA (`ia_*`, identidad bloqueada, presupuesto excedido): el resumen se destaca. */
+const esMotivoIA = (m: string) => m.startsWith('ia_') || m === 'identidad_bloqueada' || m === 'presupuesto_excedido' || m === 'solicitud_cliente' || m === 'queja';
+
 export function ColaAtencion({ usuario, version, onAbrir, onCambio }: Props) {
   const { reconexiones } = useConexionTiempoReal();
   const cargador = useCallback(() => {
@@ -109,7 +112,12 @@ export function ColaAtencion({ usuario, version, onAbrir, onCambio }: Props) {
                   {ETIQUETA_MOTIVO_COLA[i.motivo]}
                   {i.prioridad === 1 && <span className="insignia insignia-advertencia"> Prioridad alta</span>}
                 </p>
-                {i.resumen && <p className="ayuda">{i.resumen}</p>}
+                {i.resumen && (
+                  <p className={esMotivoIA(i.motivo) ? 'resumen-traspaso resumen-texto' : 'ayuda'}>
+                    {esMotivoIA(i.motivo) && <strong>Resumen de la IA: </strong>}
+                    {i.resumen}
+                  </p>
+                )}
                 <p className="ayuda">
                   En espera: <time>{formatearDuracion(espera)}</time>
                 </p>

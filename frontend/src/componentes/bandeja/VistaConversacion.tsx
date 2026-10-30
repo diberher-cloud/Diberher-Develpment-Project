@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   listarMensajes, marcarLeida, obtenerConversacion, obtenerFichaConversacion,
 } from '../../api/endpoints';
@@ -15,6 +16,8 @@ import {
 } from '../../utilidades/whatsapp';
 import { Cargando } from '../Cargando';
 import { FichaCliente } from '../consola/FichaCliente';
+import { EstadoIAConversacion } from '../ia/EstadoIAConversacion';
+import { PanelAccionesIA } from '../ia/PanelAccionesIA';
 import { MensajeError } from '../MensajeError';
 import { AccionesConversacion } from './AccionesConversacion';
 import { BurbujaMensaje } from './BurbujaMensaje';
@@ -30,9 +33,13 @@ interface Props {
   onCambio: () => void;
   /** Se incrementa cuando una acción externa (cola) cambió esta conversación: fuerza la recarga. */
   recarga?: number;
+  /** Supervisión: sin compositor ni marca de lectura (las acciones de gestión siguen disponibles). */
+  soloLectura?: boolean;
+  /** Se invoca con la conversación cada vez que se carga o se recarga. */
+  onConversacion?: (c: Conversacion) => void;
 }
 
-export function VistaConversacion({ conversacionId: id, usuario, configuracion, onCambio, recarga = 0 }: Props) {
+export function VistaConversacion({ conversacionId: id, usuario, configuracion, onCambio, recarga = 0, soloLectura = false, onConversacion }: Props) {
   const { reconexiones } = useConexionTiempoReal();
   const [conv, setConv] = useState<Conversacion | null>(null);
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
@@ -109,11 +116,18 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
     if (e.tipo !== 'conversacion.estado' || e.datos.conversacion_id !== id) return;
     programar('conversacion');
   });
+  // Una acción de la IA puede cambiar la gestión, la identidad o el dueño: se recarga la conversación (agrupado).
+  useEventoTiempoReal('ia.accion', (e) => {
+    if (e.tipo === 'ia.accion' && e.datos.conversacion_id === id) programar('conversacion');
+  });
+  useEffect(() => {
+    if (conv) onConversacion?.(conv);
+  }, [conv, onConversacion]);
 
   const esDueno = !!conv && conv.estado === 'abierta' && conv.atendida_por === 'humano' && conv.usuario_asignado?.id === usuario.id;
   const sinLeer = conv?.mensajes_sin_leer ?? 0;
   useEffect(() => {
-    if (!esDueno || sinLeer === 0) return;
+    if (soloLectura || !esDueno || sinLeer === 0) return;
     let cancelado = false;
     marcarLeida(id).then(
       () => {
@@ -126,7 +140,7 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
     return () => {
       cancelado = true;
     };
-  }, [esDueno, sinLeer, id, onCambio]);
+  }, [soloLectura, esDueno, sinLeer, id, onCambio]);
 
   useLayoutEffect(() => {
     const el = contenedor.current;
@@ -215,6 +229,12 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
       )}
       {aviso && <p role="status" className="alerta alerta-ok">{aviso}</p>}
       <MensajeError error={error} />
+      {conv.ia && <EstadoIAConversacion conversacion={conv} mostrarCoste={usuario.rol !== 'agente'} />}
+      {soloLectura && esDueno && (
+        <p role="status" className="alerta alerta-ok">
+          Ahora la atiende usted. <Link to={`/bandeja?conversacion=${conv.id}`}>Abrir en la bandeja</Link> para responder.
+        </p>
+      )}
 
       <AccionesConversacion
         conversacion={conv}
@@ -226,6 +246,7 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
         onAviso={setAviso}
       />
       {fichaVisible && <FichaConversacion id={conv.id} />}
+      {conv.ia && (usuario.rol !== 'agente' || esDueno) && <PanelAccionesIA conversacionId={conv.id} abierto={soloLectura} />}
 
       <div className="mensajes" ref={contenedor} onScroll={alDesplazar} role="log" aria-live="polite" aria-label="Mensajes de la conversación" tabIndex={0}>
         {hayMas && (
@@ -245,7 +266,7 @@ export function VistaConversacion({ conversacionId: id, usuario, configuracion, 
         )}
       </div>
 
-      {conv.estado === 'abierta' && (
+      {conv.estado === 'abierta' && !soloLectura && (
         <CompositorMensaje
           conversacion={conv}
           maxCaracteres={configuracion?.max_caracteres_texto}

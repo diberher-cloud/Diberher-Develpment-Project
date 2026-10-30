@@ -1,18 +1,20 @@
 import { useState, type FormEvent } from 'react';
 import {
-  autorizarConversacion, liberarConversacion, optOutConversacion, tomarConversacion,
+  autorizarConversacion, devolverConversacionIA, liberarConversacion, optOutConversacion, tomarConversacion,
 } from '../../api/endpoints';
 import type { ErrorApi } from '../../api/cliente';
 import type { CierreConversacion, Conversacion, Finalidad, Usuario } from '../../api/tipos';
+import { traducirErrorIA } from '../../utilidades/ia';
 import { comoErrorApi } from '../../utilidades/useCarga';
 import { ETIQUETA_FINALIDAD } from '../../utilidades/whatsapp';
 import { Campo } from '../Campo';
 import { MensajeError } from '../MensajeError';
 import { AsignarA } from './AsignarA';
 import { CerrarConversacion } from './CerrarConversacion';
+import { TraspasarACola } from './TraspasarACola';
 import { VincularRegistro } from './VincularRegistro';
 
-type Panel = null | 'asignar' | 'optout' | 'autorizacion' | 'vincular' | 'cerrar';
+type Panel = null | 'asignar' | 'optout' | 'autorizacion' | 'vincular' | 'cerrar' | 'traspasar';
 
 interface Props {
   conversacion: Conversacion;
@@ -32,8 +34,14 @@ export function AccionesConversacion({ conversacion: c, usuario, fichaVisible, o
   const gestor = usuario.rol !== 'agente';
   const abierta = c.estado === 'abierta';
   const esDueno = c.atendida_por === 'humano' && c.usuario_asignado?.id === usuario.id;
-  const puedeTomar = abierta && c.atendida_por === 'sin_asignar';
-  const puedeAsignar = abierta && gestor && c.atendida_por !== 'ia';
+  // A/S pueden tomar y asignar también desde la IA (fase-2c.md §5.2); el agente no puede tomar una conversación de la IA.
+  const puedeTomar = abierta && (c.atendida_por === 'sin_asignar' || (c.atendida_por === 'ia' && gestor));
+  const puedeAsignar = abierta && gestor;
+  const puedeTraspasar = abierta && gestor && c.atendida_por === 'ia';
+  // Devolver a la IA: el dueño humano, o A/S desde la cola; la decisión final y sus motivos los da el servidor.
+  const puedeVerDevolver = abierta && c.ia !== null && c.atendida_por !== 'ia' && (esDueno || gestor);
+  const motivosNoDevolver = c.ia?.motivos_no_devolver ?? [];
+  const devolverBloqueado = c.ia !== null && !c.ia.puede_devolver_ia;
   const puedeLiberar = abierta && c.atendida_por === 'humano' && (esDueno || gestor);
   const puedeActuar = abierta && (esDueno || gestor);
 
@@ -45,7 +53,7 @@ export function AccionesConversacion({ conversacion: c, usuario, fichaVisible, o
       onAviso(aviso);
       setPanel(null);
     } catch (e) {
-      setError(comoErrorApi(e));
+      setError(traducirErrorIA(comoErrorApi(e)));
     } finally {
       setOcupado(false);
     }
@@ -61,6 +69,19 @@ export function AccionesConversacion({ conversacion: c, usuario, fichaVisible, o
           </button>
         )}
         {puedeAsignar && <button type="button" aria-expanded={panel === 'asignar'} onClick={() => alternar('asignar')}>Asignar a…</button>}
+        {puedeTraspasar && (
+          <button type="button" aria-expanded={panel === 'traspasar'} onClick={() => alternar('traspasar')}>Traspasar a cola</button>
+        )}
+        {puedeVerDevolver && (
+          <button
+            type="button"
+            disabled={ocupado || devolverBloqueado}
+            aria-describedby={devolverBloqueado ? 'motivos-no-devolver' : undefined}
+            onClick={() => void ejecutar(() => devolverConversacionIA(c.id), 'Conversación devuelta a la IA.')}
+          >
+            Devolver a la IA
+          </button>
+        )}
         {puedeLiberar && (
           <button type="button" disabled={ocupado} onClick={() => void ejecutar(() => liberarConversacion(c.id), 'Conversación liberada a la cola.')}>
             Liberar
@@ -82,8 +103,21 @@ export function AccionesConversacion({ conversacion: c, usuario, fichaVisible, o
         )}
         {puedeActuar && <button type="button" aria-expanded={panel === 'cerrar'} onClick={() => alternar('cerrar')}>Cerrar conversación</button>}
       </div>
+      {puedeVerDevolver && devolverBloqueado && (
+        <ul id="motivos-no-devolver" className="ayuda lista-simple" aria-label="Por qué no se puede devolver a la IA">
+          {motivosNoDevolver.length === 0 && <li>La IA no está disponible para esta conversación.</li>}
+          {motivosNoDevolver.map((m) => <li key={m.codigo}>{m.mensaje}</li>)}
+        </ul>
+      )}
       <MensajeError error={error} />
 
+      {panel === 'traspasar' && (
+        <TraspasarACola
+          conversacionId={c.id}
+          onTraspasada={(x) => { onActualizada(x); onAviso('Conversación traspasada a la cola de atención.'); setPanel(null); }}
+          onCancelar={() => setPanel(null)}
+        />
+      )}
       {panel === 'asignar' && (
         <AsignarA
           conversacionId={c.id}

@@ -3,6 +3,7 @@ import { cerrarConversacion } from '../../api/endpoints';
 import type { ErrorApi } from '../../api/cliente';
 import type { CierreConversacion, Conversacion } from '../../api/tipos';
 import { comoErrorApi } from '../../utilidades/useCarga';
+import { ETIQUETA_RESULTADO } from '../../utilidades/tipificacion';
 import { huboEntrantes } from '../../utilidades/whatsapp';
 import { FormularioTipificacion } from '../consola/FormularioTipificacion';
 import { MensajeError } from '../MensajeError';
@@ -32,6 +33,26 @@ export function CerrarConversacion({ conversacion: c, saldoTotal = null, onCerra
     }
   }
 
+  // La IA ya registró la gestión (UNIQUE por conversación): se cierra sin formulario y con `tipificacion: null`.
+  const yaTipificada = c.tipificada || c.ia?.gestion != null;
+  if (yaTipificada) {
+    return (
+      <section aria-labelledby="t-cerrar" className="tarjeta">
+        <h3 id="t-cerrar">Cerrar la conversación</h3>
+        <p>
+          La conversación ya tiene una gestión registrada
+          {c.ia?.gestion ? ` (${ETIQUETA_RESULTADO[c.ia.gestion.resultado]})` : ''}: se cierra sin volver a tipificar.
+        </p>
+        <MensajeError error={error} />
+        <div className="acciones">
+          <button type="button" className="primario" disabled={enviando} onClick={() => void cerrarSinTipificar()}>
+            {enviando ? 'Cerrando…' : 'Cerrar conversación'}
+          </button>
+          <button type="button" onClick={onCancelar}>Cancelar</button>
+        </div>
+      </section>
+    );
+  }
   if (c.campana_cliente_id !== null && c.campana !== null) {
     return (
       <>

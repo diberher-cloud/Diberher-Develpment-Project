@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useWhatsApp, WhatsAppProvider } from './ContextoWhatsApp';
+import { AvisosIA } from './ia/AvisosIA';
 
 export function Layout() {
   return (
@@ -32,6 +33,8 @@ function Estructura() {
           {tieneRol('agente') && <NavLink to="/consola">Consola</NavLink>}
           <NavLink to="/bandeja">{noLeidos > 0 ? `Bandeja (${noLeidos})` : 'Bandeja'}</NavLink>
           {tieneRol('administrador', 'supervisor') && <NavLink to="/supervision/agentes">Supervisión</NavLink>}
+          {tieneRol('administrador', 'supervisor') && <NavLink to="/supervision/ia">Supervisión IA</NavLink>}
+          {tieneRol('administrador', 'supervisor') && <NavLink to="/ia/evaluaciones">Evaluaciones IA</NavLink>}
           {tieneRol('administrador', 'supervisor') && <NavLink to="/exclusiones">Exclusiones</NavLink>}
           {tieneRol('administrador', 'supervisor') && <NavLink to="/whatsapp/plantillas">Plantillas</NavLink>}
           {tieneRol('administrador', 'supervisor') && <NavLink to="/autorizaciones">Autorizaciones</NavLink>}
@@ -48,6 +51,7 @@ function Estructura() {
           </button>
         </div>
       </header>
+      <AvisosIA />
       <main id="contenido" className="contenido">
         <Outlet />
       </main>

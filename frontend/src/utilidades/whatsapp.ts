@@ -32,7 +32,7 @@ export const ETIQUETA_MOTIVO_CIERRE: Record<MotivoCierre, string> = {
   opt_out: 'Cerrada por solicitud de baja', sistema: 'Cerrada por el sistema',
 };
 export const ETIQUETA_FINALIDAD: Record<Finalidad, string> = { venta: 'Venta', cobranza: 'Cobranza', todas: 'Todas' };
-export const ETIQUETA_AUTOR: Record<AutorMensaje, string> = { cliente: 'Cliente', agente: 'Agente', ia: 'IA', sistema: 'Sistema' };
+export const ETIQUETA_AUTOR: Record<AutorMensaje, string> = { cliente: 'Cliente', agente: 'Agente', ia: 'Asistente IA', sistema: 'Sistema' };
 export const ETIQUETA_CAMPO_PLANTILLA: Record<CampoPlantilla, string> = {
   primer_nombre: 'Primer nombre del cliente', empresa: 'Nombre de la empresa', agente: 'Primer nombre del agente', producto: 'Producto del registro',
 };

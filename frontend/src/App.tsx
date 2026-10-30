@@ -15,6 +15,8 @@ import { Bandeja } from './paginas/Bandeja';
 import { PlantillasWhatsApp } from './paginas/PlantillasWhatsApp';
 import { Autorizaciones } from './paginas/Autorizaciones';
 import { SimuladorWhatsApp } from './paginas/SimuladorWhatsApp';
+import { SupervisionIA } from './paginas/SupervisionIA';
+import { EvaluacionesIA } from './paginas/EvaluacionesIA';
 
 const GESTION = ['administrador', 'supervisor'] as const;
 
@@ -76,6 +78,22 @@ export function App() {
           element={
             <RutaProtegida roles={[...GESTION]}>
               <SupervisionAgentes />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/supervision/ia"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <SupervisionIA />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/ia/evaluaciones"
+          element={
+            <RutaProtegida roles={[...GESTION]}>
+              <EvaluacionesIA />
             </RutaProtegida>
           }
         />

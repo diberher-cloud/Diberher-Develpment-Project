@@ -11,6 +11,8 @@ import type {
   EstadoTrabajos, Finalidad, ItemCola, Mensaje, MensajeTextoCrear, PaginaMensajes, Plantilla, PlantillaActualizar,
   PlantillaConsolaCrear, PlantillaEnvioCrear, RegistroCandidato, ResultadoEnvioPlantilla, ResultadoSincronizacion,
   SimulacionEntrante,
+  AccionIA, ConfiguracionGlobalIA, ConfiguracionIA, ConfiguracionIAActualizar, ConversacionIAResumen, EvaluacionCrear,
+  EvaluacionIA, Instruccion, MetricasIA, Oferta, OfertaActualizar, OfertaCrear, UsoIAConversacion,
 } from './tipos';
 
 export interface ParamsPagina { page?: number; page_size?: number }
@@ -179,3 +181,45 @@ export const simularEntranteWhatsApp = (c: SimulacionEntrante) =>
 export const simularEstadoMensaje = (
   mensajeId: number, c: { estado: 'delivered' | 'read' | 'failed' | 'undelivered'; error_codigo?: string | null },
 ) => solicitar<void>('POST', `/whatsapp/simulacion/mensajes/${mensajeId}/estado`, { cuerpo: c });
+
+// Fase 2C: agente IA (configuración por campaña, ofertas, global)
+export const obtenerConfiguracionIA = (campanaId: number) => solicitar<ConfiguracionIA>('GET', `/campanas/${campanaId}/ia`);
+export const guardarConfiguracionIA = (campanaId: number, c: ConfiguracionIAActualizar) =>
+  solicitar<ConfiguracionIA>('PUT', `/campanas/${campanaId}/ia`, { cuerpo: c });
+export const activarIA = (campanaId: number) => solicitar<ConfiguracionIA>('POST', `/campanas/${campanaId}/ia/activar`);
+export const desactivarIA = (campanaId: number) =>
+  solicitar<ConfiguracionIA>('POST', `/campanas/${campanaId}/ia/desactivar`, { cuerpo: {} });
+export const listarOfertas = (campanaId: number, activas?: boolean) =>
+  solicitar<Oferta[]>('GET', `/campanas/${campanaId}/ofertas`, { params: { activas } });
+export const crearOferta = (campanaId: number, c: OfertaCrear) =>
+  solicitar<Oferta>('POST', `/campanas/${campanaId}/ofertas`, { cuerpo: c });
+export const actualizarOferta = (campanaId: number, ofertaId: number, c: OfertaActualizar) =>
+  solicitar<Oferta>('PATCH', `/campanas/${campanaId}/ofertas/${ofertaId}`, { cuerpo: c });
+export const obtenerConfiguracionGlobalIA = () => solicitar<ConfiguracionGlobalIA>('GET', '/configuracion/ia');
+export const guardarConfiguracionGlobalIA = (iaActiva: boolean) =>
+  solicitar<ConfiguracionGlobalIA>('PUT', '/configuracion/ia', { cuerpo: { ia_activa: iaActiva } });
+
+// Fase 2C: supervisión de la IA y conversaciones
+export const listarConversacionesIA = (
+  p: ParamsPagina & {
+    campana_id?: number | ''; estado?: EstadoConversacion | ''; atendida_por?: AtendidaPor | ''; con_gestion?: boolean | '';
+    identidad?: 'verificada' | 'no_verificada' | ''; desde?: string; hasta?: string;
+  },
+) => solicitar<Pagina<ConversacionIAResumen>>('GET', '/supervision/ia/conversaciones', { params: { ...p } });
+export const obtenerMetricasIA = (p: { campana_id?: number | ''; desde?: string; hasta?: string } = {}) =>
+  solicitar<MetricasIA>('GET', '/supervision/ia/metricas', { params: { ...p } });
+export const listarAccionesIA = (id: number) => solicitar<AccionIA[]>('GET', `/conversaciones/${id}/acciones-ia`);
+export const obtenerUsoIA = (id: number) => solicitar<UsoIAConversacion>('GET', `/conversaciones/${id}/uso-ia`);
+export const listarInstrucciones = (id: number) => solicitar<Instruccion[]>('GET', `/conversaciones/${id}/instrucciones`);
+export const crearInstruccion = (id: number, texto: string) =>
+  solicitar<Instruccion>('POST', `/conversaciones/${id}/instrucciones`, { cuerpo: { texto } });
+export const traspasarConversacion = (id: number, resumen?: string) =>
+  solicitar<Conversacion>('POST', `/conversaciones/${id}/traspasar`, { cuerpo: resumen ? { resumen } : {} });
+export const devolverConversacionIA = (id: number) =>
+  solicitar<Conversacion>('POST', `/conversaciones/${id}/devolver-ia`, { cuerpo: {} });
+
+// Fase 2C: evaluaciones de la IA
+export const listarEvaluaciones = (p: ParamsPagina & { modo?: 'offline' | 'online' | ''; campana_id?: number | '' }) =>
+  solicitar<Pagina<EvaluacionIA>>('GET', '/ia/evaluaciones', { params: { ...p } });
+export const obtenerEvaluacion = (id: number) => solicitar<EvaluacionIA>('GET', `/ia/evaluaciones/${id}`);
+export const lanzarEvaluacion = (c: EvaluacionCrear) => solicitar<EvaluacionIA>('POST', '/ia/evaluaciones', { cuerpo: c });

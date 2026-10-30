@@ -26,12 +26,12 @@ async function abrirPestana(nombre: string) {
 }
 
 describe('Pestañas del detalle de campaña', () => {
-  it('administrador y supervisor ven tres pestañas; la de clientes es la inicial', async () => {
+  it('administrador y supervisor ven cuatro pestañas; la de clientes es la inicial', async () => {
     iniciarSesionComo('supervisor');
     api();
     renderizarApp('/campanas/5');
     const tabs = await screen.findAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Clientes', 'Agentes', 'Tipificaciones']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['Clientes', 'Agentes', 'Tipificaciones', 'Agente IA']);
     expect(screen.getByRole('tab', { name: 'Clientes' })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByRole('heading', { name: 'Clientes de la campaña' })).toBeInTheDocument();
   });

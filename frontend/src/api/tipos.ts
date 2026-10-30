@@ -169,7 +169,16 @@ export type EventoTiempoReal =
         motivo_cierre: MotivoCierre | null }; emitido_en: string }
   | { tipo: 'atencion.cola'; datos: { cola_id: number; conversacion_id: number; campana_id: number | null;
         motivo: MotivoCola; accion: 'encolada' | 'asignada' | 'cerrada' }; emitido_en: string }
-  | { tipo: 'trabajo.fallido'; datos: { trabajo_id: number; tipo: string; codigo: string }; emitido_en: string };
+  | { tipo: 'trabajo.fallido'; datos: { trabajo_id: number; tipo: string; codigo: string }; emitido_en: string }
+  | { tipo: 'ia.turno'; datos: { conversacion_id: number | null; llamada_id: number | null; campana_id: number;
+        estado: 'en_curso' | 'completado' | 'derivado' | 'error' | 'sin_respuesta'; iteraciones: number }; emitido_en: string }
+  | { tipo: 'ia.accion'; datos: { conversacion_id: number | null; llamada_id: number | null; campana_id: number; accion_id: number;
+        herramienta: string; es_error: boolean; codigo_error: string | null }; emitido_en: string }
+  | { tipo: 'ia.alerta'; datos: { tipo: TipoAlertaIA; nivel: 'aviso' | 'critico'; campana_id: number | null;
+        conversacion_id: number | null }; emitido_en: string }
+  | { tipo: 'ia.configuracion'; datos: { campana_id: number | null; activa: boolean; version: number | null;
+        desactivada_motivo: MotivoDesactivacionIA | null }; emitido_en: string }
+  | { tipo: 'ia.evaluacion'; datos: { evaluacion_id: number; estado: EstadoEvaluacionIA; aprobada: boolean | null }; emitido_en: string };
 
 /** `POST /ws/ticket`: ticket de un solo uso; `expira_en` en segundos. */
 export interface TicketWs { ticket: string; expira_en: number }
@@ -210,6 +219,8 @@ export interface Conversacion extends ConversacionResumen {
   puede_responder: boolean;
   motivos_no_responder: Motivo<'NO_ES_DUENO' | 'CONVERSACION_CERRADA' | 'VENTANA_CERRADA' | 'CLIENTE_OPT_OUT'>[];
   alertas: Motivo<'EXCLUIDO_WHATSAPP' | 'SIN_AUTORIZACION' | 'SIN_CAMPANA' | 'VARIOS_REGISTROS'>[];
+  /** Fase 2C (fase-2c.md §6.7): `null` si la conversación nunca tuvo IA y su campaña no tiene IA activa. */
+  ia: EstadoIAConversacion | null;
 }
 export interface MediaMensaje { indice: number; categoria: CategoriaMedia; tipo_contenido: string; disponible: boolean }
 export interface Mensaje {
@@ -267,3 +278,98 @@ export interface SimulacionEntrante {
   numero: string; texto?: string | null; nombre_perfil?: string | null;
   media?: { tipo_contenido: string }[]; boton_payload?: string | null; boton_texto?: string | null;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Fase 2C (fase-2c.md §6.11): agente IA, supervisión y evaluaciones
+// ---------------------------------------------------------------------------------------------
+export type EsfuerzoIA = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type Tratamiento = 'usted' | 'tu';
+export type Periodicidad = 'unica' | 'semanal' | 'quincenal' | 'mensual';
+export type MotivoDesactivacionIA = 'manual' | 'presupuesto' | 'errores';
+export type CodigoRequisitoIA =
+  | 'WHATSAPP_NO_HABILITADO' | 'SIN_CONFIGURACION' | 'REGLAS_INVALIDAS' | 'SIN_OFERTAS_ACTIVAS' | 'PRESUPUESTO_CERO'
+  | 'SIN_AGENTES_ASIGNADOS' | 'EVALUACION_OFFLINE_PENDIENTE' | 'EVALUACION_ONLINE_PENDIENTE' | 'IA_GLOBAL_DESACTIVADA'
+  | 'PROVEEDOR_FALSO_EN_PRODUCCION' | 'MODELO_SIN_PRECIO';
+export type TipoAlertaIA =
+  'presupuesto_campana' | 'presupuesto_conversacion' | 'errores' | 'kill_switch' | 'rechazo_modelo' | 'evaluacion_fallida';
+export type EstadoEvaluacionIA = 'pendiente' | 'en_curso' | 'completada' | 'fallida';
+export interface TramoCuotas { max_cuotas: number; descuento_max_pct: string }
+export interface ReglasCobranza {
+  base_descuento: 'saldo_mora' | 'saldo_total'; descuento_max_pct: string; descuento_max_pct_por_cuotas: TramoCuotas[];
+  monto_minimo_promesa: string; monto_minimo_cuota: string; max_cuotas: number;
+  plazo_max_dias_primer_pago: number; plazo_max_dias_total: number; periodicidades: Exclude<Periodicidad, 'unica'>[];
+}
+export interface ReglasVenta { max_unidades_por_venta: number; requiere_aceptacion_terminos: boolean }
+export interface VerificacionIA { factores: 'numero_documento'[]; max_intentos: number }
+export interface RequisitosActivacion { cumple: boolean; faltantes: Motivo<CodigoRequisitoIA>[] }
+export interface ConfiguracionIA {
+  campana_id: number; campana_tipo: TipoCampana; configurada: boolean; activa: boolean; version: number;
+  modelo: string; esfuerzo: EsfuerzoIA; prompt_version: number; tratamiento: Tratamiento; instrucciones: string | null;
+  verificacion: VerificacionIA; reglas: ReglasCobranza | ReglasVenta | null;
+  presupuesto_usd_mensual: string; max_costo_conversacion_usd: string; max_turnos_conversacion: number;
+  desactivada_motivo: MotivoDesactivacionIA | null; activada_en: string | null; desactivada_en: string | null;
+  gasto_mes_usd: string; requisitos: RequisitosActivacion; actualizado_por: UsuarioRef | null; actualizado_en: string | null;
+}
+export interface ConfiguracionIAActualizar {
+  version_esperada: number; modelo: string; esfuerzo: EsfuerzoIA; prompt_version: number; tratamiento: Tratamiento;
+  instrucciones: string | null; verificacion: VerificacionIA; reglas: ReglasCobranza | ReglasVenta;
+  presupuesto_usd_mensual: string; max_costo_conversacion_usd: string; max_turnos_conversacion: number;
+}
+export interface Oferta {
+  id: number; campana_id: number; codigo: string; nombre: string; descripcion: string | null; precio: string;
+  descuento_max_pct: string; max_unidades: number; condiciones: string | null; activa: boolean; actualizado_en: string;
+}
+export type OfertaCrear = Omit<Oferta, 'id' | 'campana_id' | 'actualizado_en' | 'activa'> & { activa?: boolean };
+export type OfertaActualizar = Partial<Omit<OfertaCrear, 'codigo'>>;
+export interface ConfiguracionGlobalIA {
+  ia_activa: boolean; ia_habilitada_entorno: boolean; proveedor: 'falso' | 'anthropic'; modelos_permitidos: string[];
+  esfuerzos: EsfuerzoIA[]; prompts: { chat: number[] }; exigir_evaluacion_online: boolean;
+  actualizado_por: UsuarioRef | null; actualizado_en: string;
+}
+export interface GestionIA { resultado: ResultadoTipificacion; tipificacion_id: number }
+export interface EstadoIAConversacion {
+  identidad_verificada: boolean; turnos: number; costo_usd: string | null; modelo: string | null; gestion: GestionIA | null;
+  aviso_enviado: boolean; ultimo_traspaso: { motivo: MotivoCola; resumen: string | null; creado_en: string } | null;
+  puede_devolver_ia: boolean; motivos_no_devolver: Motivo<'CONVERSACION_CERRADA' | 'IA_NO_DISPONIBLE' | 'CLIENTE_OPT_OUT'>[];
+}
+export interface ConversacionIAResumen extends ConversacionResumen {
+  ia: { identidad_verificada: boolean; turnos: number; costo_usd: string; modelo: string; gestion: GestionIA | null;
+        ultima_accion: { herramienta: string; es_error: boolean; creado_en: string } | null;
+        turno_en_curso: boolean; instrucciones_pendientes: number };
+}
+export type EfectoAccionIA = 'ninguno' | 'identidad' | 'tipificacion' | 'promesa' | 'venta' | 'seguimiento'
+  | 'exclusion' | 'autorizacion' | 'derivacion' | 'cierre_pendiente';
+export interface AccionIA {
+  id: number; tool_use_id: string; herramienta: string; entrada: Record<string, unknown>;
+  resultado: Record<string, unknown> | null; es_error: boolean; codigo_error: string | null; efecto: EfectoAccionIA;
+  referencia: { tipo: string; id: number } | null; duracion_ms: number; creado_en: string;
+}
+export interface LlamadaModelo {
+  id: number; iteracion: number; modelo: string; modelo_servido: string; stop_reason: string;
+  input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number;
+  costo_usd: string; duracion_ms: number; request_id: string | null; creado_en: string;
+}
+export interface UsoIAConversacion {
+  total: { llamadas: number; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number;
+           cache_read_input_tokens: number; costo_usd: string; tasa_cache: number | null };
+  llamadas: LlamadaModelo[];
+}
+export interface Instruccion { id: number; conversacion_id: number; usuario: UsuarioRef; texto: string; creado_en: string; aplicada_en: string | null }
+export interface MetricasIA {
+  campana_id: number | null; desde: string; hasta: string; conversaciones: number; con_identidad_verificada: number;
+  tasa_verificacion: number | null; acuerdos: { numero: number; monto_total: string }; ventas: { numero: number; valor_total: string };
+  resultados: Partial<Record<ResultadoTipificacion, number>>; derivaciones: Partial<Record<MotivoCola, number>>;
+  opt_outs: number; cerradas_por_ia: number; cerradas_por_inactividad: number; costo_usd: string; costo_por_acuerdo_usd: string | null;
+  tokens: { entrada: number; salida: number; cache_escritura: number; cache_lectura: number }; tasa_cache: number | null;
+  tiempo_respuesta_ms: { p50: number | null; p95: number | null }; errores: Record<string, number>; guardas: Record<string, number>;
+}
+export interface EvaluacionIA {
+  id: number; modo: 'offline' | 'online'; canal: 'chat' | 'voz'; campana_id: number | null; modelo: string | null;
+  esfuerzo: EsfuerzoIA | null; prompt_version: number; huella: string; patron_casos: string | null;
+  estado: EstadoEvaluacionIA; aprobada: boolean | null;
+  resumen: { total?: number; aprobados?: number; por_categoria?: Record<string, { total: number; aprobados: number }>;
+             costo_usd?: string; tasa_cache?: number | null; duracion_ms?: number };
+  casos: { id: string; categoria: string; aprobado: boolean; fallos: string[] }[];
+  iniciada_por: UsuarioRef | null; creado_en: string; completada_en: string | null;
+}
+export interface EvaluacionCrear { modo: 'offline' | 'online'; canal: 'chat'; campana_id?: number; casos?: string }

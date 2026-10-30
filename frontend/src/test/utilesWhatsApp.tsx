@@ -16,13 +16,13 @@ export const conversacion = (o: Partial<Conversacion> = {}): Conversacion => ({
   numero_mascara: '+57300****567', numero_e164: null, nombre_perfil: 'María', campana: { id: 1, nombre: 'Cobranza cartera octubre', tipo: 'cobranza' },
   cliente_nombre: 'María Pérez', iniciada_por: 'cliente', ventana_abierta: true, ventana_expira_en: enHoras(20),
   ultimo_mensaje_en: haceMin(5), mensajes_sin_leer: 0, motivo_cola: null, abierta_en: haceMin(30), cerrada_en: null, motivo_cierre: null,
-  campana_cliente_id: 15, cliente_id: 9, telefono_id: 21, tipificada: false, puede_responder: true, motivos_no_responder: [], alertas: [],
+  campana_cliente_id: 15, cliente_id: 9, telefono_id: 21, tipificada: false, puede_responder: true, motivos_no_responder: [], alertas: [], ia: null,
   ...o,
 });
 
 export const resumen = (o: Partial<ConversacionResumen> = {}): ConversacionResumen => {
-  const { campana_cliente_id: _a, cliente_id: _b, telefono_id: _c, tipificada: _d, puede_responder: _e, motivos_no_responder: _f, alertas: _g, ...r } = conversacion(o);
-  void [_a, _b, _c, _d, _e, _f, _g];
+  const { campana_cliente_id: _a, cliente_id: _b, telefono_id: _c, tipificada: _d, puede_responder: _e, motivos_no_responder: _f, alertas: _g, ia: _h, ...r } = conversacion(o);
+  void [_a, _b, _c, _d, _e, _f, _g, _h];
   return r;
 };
 

@@ -98,3 +98,28 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; }
 .compositor textarea { width: 100%; }
 .previa-plantilla { margin: .5rem 0; padding: .5rem .75rem; background: var(--gris); border-left: 4px solid var(--azul); white-space: pre-wrap; }
 .acciones-conversacion .acciones { margin: .5rem 0; }
+
+/* Fase 2C: agente IA */
+button.enlace { border: none; background: none; padding: 0; color: var(--azul); text-decoration: underline; }
+.alerta-aviso { background: #fffbeb; border-color: #fcd34d; color: #78350f; }
+.avisos-ia { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
+.avisos-ia .alerta { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; justify-content: space-between; }
+.avisos-ia .alerta p { margin: 0; }
+.progreso { display: block; width: 100%; max-width: 420px; height: 1rem; margin: .25rem 0; }
+.confirmacion { background: #f9fafb; }
+.confirmacion-peligro { border-color: var(--rojo); }
+.confirmacion:focus { outline: 3px solid var(--azul); outline-offset: 2px; }
+.insignia-ia { background: #ede9fe; border-color: #c4b5fd; color: #4c1d95; }
+.estado-ia { border: 1px solid var(--borde); border-left: 6px solid var(--borde); border-radius: 8px; padding: .5rem 1rem; margin: .75rem 0; background: #fff; }
+.estado-ia-activa { border-left-color: #7c3aed; background: #faf5ff; }
+.estado-ia h3 { margin: .25rem 0; font-size: 1rem; }
+.datos-ia { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }
+.resumen-traspaso { border-left: 4px solid #d97706; background: #fffbeb; padding: .4rem .75rem; margin: .5rem 0; border-radius: 4px; }
+.resumen-traspaso p { margin: .15rem 0; }
+.resumen-texto { white-space: pre-wrap; overflow-wrap: anywhere; }
+.texto-error { color: var(--rojo); font-weight: 600; }
+.fila-error { background: #fef2f2; }
+.panel-acciones-ia summary { cursor: pointer; font-weight: 600; }
+.panel-acciones-ia code, .tabla-scroll code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.texto-instruccion { white-space: pre-wrap; overflow-wrap: anywhere; margin: .15rem 0; }
+.lista-instrucciones li { border-bottom: 1px solid var(--borde); padding: .4rem 0; }

@@ -108,8 +108,8 @@ describe('Listado de campañas', () => {
 
 describe('Navegación por rol', () => {
   it.each([
-    ['administrador', ['Campañas', 'Bandeja', 'Supervisión', 'Exclusiones', 'Plantillas', 'Autorizaciones', 'Cumplimiento', 'Usuarios']],
-    ['supervisor', ['Campañas', 'Bandeja', 'Supervisión', 'Exclusiones', 'Plantillas', 'Autorizaciones', 'Cumplimiento']],
+    ['administrador', ['Campañas', 'Bandeja', 'Supervisión', 'Supervisión IA', 'Evaluaciones IA', 'Exclusiones', 'Plantillas', 'Autorizaciones', 'Cumplimiento', 'Usuarios']],
+    ['supervisor', ['Campañas', 'Bandeja', 'Supervisión', 'Supervisión IA', 'Evaluaciones IA', 'Exclusiones', 'Plantillas', 'Autorizaciones', 'Cumplimiento']],
     ['agente', ['Campañas', 'Consola', 'Bandeja', 'Cumplimiento']],
   ] as const)('%s ve el menú %j', async (rol, esperado) => {
     iniciarSesionComo(rol);
