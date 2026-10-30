@@ -9,6 +9,7 @@ worker); con PostgreSQL publica con `pg_notify`.
 import argparse
 import logging
 import os
+import secrets
 import signal
 import socket
 import sys
@@ -34,8 +35,15 @@ logger = logging.getLogger("app.worker")
 LATIDO_MAX_SEGUNDOS = 60
 
 
+def prefijo_maquina() -> str:
+    return f"{socket.gethostname()}-"
+
+
 def identificador() -> str:
-    return f"{socket.gethostname()}-{os.getpid()}"[:80]
+    """`<máquina>-<pid>-<8 hex aleatorios>`: el sufijo aleatorio distingue cada arranque, así un
+    reinicio con el mismo pid (típico en contenedores) nunca se confunde con la instancia
+    anterior ni con otra viva."""
+    return f"{prefijo_maquina()}{os.getpid()}-{secrets.token_hex(4)}"[:80]
 
 
 def registrar_latido(db: Session, trabajador: str, momento) -> None:
@@ -69,6 +77,7 @@ def healthcheck(reloj: Reloj = ahora, fabrica: Callable[[], Session] = SessionLo
 def devolver_a_la_cola(db: Session, ids: list[int], momento) -> None:
     """Los trabajos tomados que no se ejecutaron vuelven a `pendiente` sin gastar intento."""
     for t in db.scalars(select(Trabajo).where(Trabajo.id.in_(ids), Trabajo.estado == "en_proceso")):
+        cola.restaurar_clave(db, t)
         t.estado = "pendiente"
         t.intentos = max(t.intentos - 1, 0)
         t.bloqueado_hasta = None
@@ -87,12 +96,21 @@ class Trabajador:
         self.fabrica = fabrica
         self.reloj = reloj
         self.nombre = nombre or identificador()
+        self.prefijo = prefijo_maquina() if nombre is None else nombre.rsplit("-", 2)[0] + "-"
+        self._ultima_liberacion = 0.0
         self.parar = threading.Event()
         self.settings = get_settings()
+
+    def _latir(self) -> None:
+        with self.fabrica() as db:
+            registrar_latido(db, self.nombre, self.reloj())
 
     def vuelta(self) -> int:
         """Una iteración del bucle. Devuelve cuántos trabajos ejecutó."""
         momento = self.reloj()
+        if momento.timestamp() - self._ultima_liberacion >= 30:  # instancias muertas, cada 30 s
+            self._ultima_liberacion = momento.timestamp()
+            self.liberar_propios()
         with self.fabrica() as db:
             registrar_latido(db, self.nombre, momento)
             periodicos.programar(db, momento)
@@ -105,33 +123,57 @@ class Trabajador:
                 with self.fabrica() as db:
                     devolver_a_la_cola(db, ids[posicion:], self.reloj())
                 break
-            cola.ejecutar(self.fabrica, trabajo_id, self.reloj)
+            self._latir()
+            cola.ejecutar(self.fabrica, trabajo_id, self.reloj, self.nombre)
             ejecutados += 1
         return ejecutados
 
-    def liberar_propios(self) -> int:
-        """Al arrancar: los trabajos `en_proceso` bloqueados por un worker con mi mismo id
-        (reinicio del contenedor con el mismo pid) vuelven a `pendiente` sin esperar al bloqueo."""
+    def liberar_propios(self, incluir_propio: bool = False) -> int:
+        """Devuelve a la cola los trabajos `en_proceso` de instancias MUERTAS de esta misma máquina
+        (mismo prefijo `<hostname>-`, distinto sufijo de arranque) para no esperar a que caduque
+        el bloqueo tras un SIGKILL/OOM. Una instancia con latido reciente (< 60 s) está viva y
+        nunca se toca, así dos workers vivos no se liberan trabajos entre sí. Con
+        `incluir_propio` (solo al arrancar) también los bloqueados con mi propio id.
+
+        Un trabajo que ya agotó `max_intentos` no vuelve a la cola: se agota (gancho y `fallido`),
+        o un trabajo "venenoso" que mata al worker se reintentaría indefinidamente."""
+        momento = self.reloj()
         with self.fabrica() as db:
-            propios = list(
+            vivos = set(
                 db.scalars(
-                    select(Trabajo).where(
-                        Trabajo.estado == "en_proceso", Trabajo.bloqueado_por == self.nombre
+                    select(LatidoWorker.trabajador).where(
+                        LatidoWorker.ultimo_latido
+                        >= momento - timedelta(seconds=LATIDO_MAX_SEGUNDOS)
                     )
                 )
             )
-            for t in propios:
-                cola.restaurar_clave(db, t)
-                t.estado = "pendiente"
-                t.bloqueado_hasta = None
-                t.bloqueado_por = None
-                t.actualizado_en = self.reloj()
+            candidatos = db.scalars(
+                select(Trabajo).where(
+                    Trabajo.estado == "en_proceso",
+                    Trabajo.bloqueado_por.is_not(None),
+                    Trabajo.bloqueado_por.startswith(self.prefijo, autoescape=True),
+                )
+            )
+            liberados = 0
+            for t in list(candidatos):
+                propio = t.bloqueado_por == self.nombre
+                if (propio and not incluir_propio) or (not propio and t.bloqueado_por in vivos):
+                    continue
+                if t.intentos >= t.max_intentos:
+                    cola.agotar(db, t, "AGOTADO", momento)
+                else:
+                    cola.restaurar_clave(db, t)
+                    t.estado = "pendiente"
+                    t.bloqueado_hasta = None
+                    t.bloqueado_por = None
+                    t.actualizado_en = momento
+                liberados += 1
             db.commit()
-            return len(propios)
+            return liberados
 
     def ejecutar(self) -> None:
         registro.cargar_manejadores()
-        self.liberar_propios()
+        self.liberar_propios(incluir_propio=True)
         logger.info("Worker %s iniciado.", self.nombre)
         while not self.parar.is_set():
             try:

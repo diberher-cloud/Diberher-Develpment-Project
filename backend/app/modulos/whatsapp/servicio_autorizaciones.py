@@ -227,6 +227,22 @@ def revocada_por_opt_out_posterior(
     """¿Hay una revocación por opt-out del mismo número y finalidad posterior al `otorgada_en`?
     (una autorización antigua importada no puede revivir lo que el titular pidió detener)."""
     finalidades = ("venta", "cobranza", "todas") if finalidad == "todas" else (finalidad, "todas")
+    # También cuenta un opt-out vigente (exclusión del titular) posterior, aunque no haya
+    # autorizaciones revocadas que lo evidencien.
+    if (
+        db.scalar(
+            select(Exclusion.id)
+            .where(
+                Exclusion.numero_e164 == numero,
+                Exclusion.motivo == "solicitud_titular",
+                Exclusion.canal.in_(("todos", "whatsapp")),
+                Exclusion.creado_en > otorgada_en,
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return True
     return (
         db.scalar(
             select(AutorizacionCanal.id)

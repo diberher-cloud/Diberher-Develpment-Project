@@ -1740,3 +1740,17 @@ aprueba y mapea plantillas.
 - **S2.** `vincular` bloquea `clientes` del candidato antes que la conversación (orden global §3.4).
 - **S12.** Errores de conexión previos al envío (DNS, conexión rechazada) → `CONEXION` transitorio con
   reintento; el resto sigue siendo `ENVIO_INCIERTO`.
+
+### 8.x Iteración 3 del revisor (regresión de S4)
+
+- `liberar_propios` agota (gancho `AL_AGOTAR` y `fallido`) los trabajos con `intentos >= max_intentos`
+  en lugar de devolverlos a la cola; `tomar` aplica también el límite a pendientes recuperados.
+- `cola.ejecutar` recibe el nombre del worker y renueva el bloqueo con UPDATE condicional
+  (`estado='en_proceso'` y `bloqueado_por=yo`); si otro worker retomó el trabajo, no lo ejecuta.
+- El id del worker es `<host>-<pid>-<8 hex aleatorios>`. `liberar_propios` solo libera trabajos de
+  instancias del mismo host sin latido reciente (< 60 s); al arrancar libera también los propios.
+  Dos workers vivos nunca se liberan trabajos entre sí.
+- El gancho `AL_AGOTAR` dentro de `tomar` corre en un savepoint; si falla se registra el tipo de
+  error (sin datos personales) y el trabajo se marca `fallido` igualmente.
+- `revocada_por_opt_out_posterior` considera también una `Exclusion` posterior por solicitud del
+  titular (canal `todos` o `whatsapp`) del mismo número.

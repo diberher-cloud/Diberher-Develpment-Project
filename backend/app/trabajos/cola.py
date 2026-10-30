@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -97,21 +97,13 @@ def tomar(db: Session, trabajador: str, ahora: datetime, limite: int) -> list[Tr
     bloqueo = timedelta(seconds=get_settings().worker_bloqueo_segundos)
     tomados: list[Trabajo] = []
     for t in filas:
-        recuperado = t.estado == "en_proceso"
         t.intentos += 1
         t.clave_unica = None
         t.actualizado_en = ahora
-        if recuperado and t.intentos > t.max_intentos:
-            # Un bloqueo caducado más veces de las permitidas: el trabajo mata al worker.
-            t.ultimo_error = "BloqueoCaducado:AGOTADO"
-            registro.cargar_manejadores()
-            gancho = registro.AL_AGOTAR.get(t.tipo)
-            if gancho is not None:
-                try:
-                    gancho(db, dict(t.payload or {}), "AGOTADO", ahora)
-                except Exception as exc_gancho:
-                    logger.error("Gancho de agotamiento falló: %s", type(exc_gancho).__name__)
-            _marcar_fallido(db, t, "AGOTADO", ahora)
+        if t.intentos > t.max_intentos:
+            # Más tomas que `max_intentos` (bloqueos caducados o liberaciones tras un reinicio): el
+            # trabajo está matando al worker y no se vuelve a ejecutar.
+            agotar(db, t, "AGOTADO", ahora)
             continue
         t.estado = "en_proceso"
         t.bloqueado_hasta = ahora + bloqueo
@@ -119,6 +111,21 @@ def tomar(db: Session, trabajador: str, ahora: datetime, limite: int) -> list[Tr
         tomados.append(t)
     db.commit()
     return tomados
+
+
+def agotar(db: Session, t: Trabajo, codigo: str, ahora: datetime) -> None:
+    """Pasa el trabajo a `fallido` por agotamiento, tras el gancho `AL_AGOTAR` del tipo. Un fallo
+    del gancho (en un SAVEPOINT) se registra sin datos personales y no aborta la transacción."""
+    t.ultimo_error = f"Agotado:{codigo}"[:300]
+    registro.cargar_manejadores()
+    gancho = registro.AL_AGOTAR.get(t.tipo)
+    if gancho is not None:
+        try:
+            with db.begin_nested():
+                gancho(db, dict(t.payload or {}), codigo, ahora)
+        except Exception as exc_gancho:
+            logger.error("Gancho de agotamiento falló: %s", type(exc_gancho).__name__)
+    _marcar_fallido(db, t, codigo, ahora)
 
 
 def _marcar_fallido(db: Session, t: Trabajo, codigo: str, ahora: datetime) -> None:
@@ -137,19 +144,36 @@ def _marcar_fallido(db: Session, t: Trabajo, codigo: str, ahora: datetime) -> No
     bus.publicar(db, "trabajo.fallido", {"trabajo_id": t.id, "tipo": t.tipo, "codigo": codigo})
 
 
-def ejecutar(db_factory: Callable[[], Session], trabajo_id: int, reloj: Reloj) -> None:
-    """Ejecuta un trabajo ya tomado en una sesión nueva (reintentos, fallo y auditoría)."""
+def ejecutar(
+    db_factory: Callable[[], Session],
+    trabajo_id: int,
+    reloj: Reloj,
+    trabajador: str | None = None,
+) -> None:
+    """Ejecuta un trabajo ya tomado por `trabajador` en una sesión nueva (reintentos, fallo y
+    auditoría). Si otro worker lo retomó mientras tanto, no se ejecuta."""
     registro.cargar_manejadores()
     with db_factory() as db:
-        trabajo = db.get(Trabajo, trabajo_id)
-        if trabajo is None or trabajo.estado != "en_proceso":
-            return
-        tipo, payload = trabajo.tipo, dict(trabajo.payload or {})
         ahora = reloj()
-        # El bloqueo se renueva al EMPEZAR cada trabajo del lote: otro worker no retoma uno
-        # que sigue en curso aunque el lote haya tardado más que `WORKER_BLOQUEO_SEGUNDOS`.
-        trabajo.bloqueado_hasta = ahora + timedelta(seconds=get_settings().worker_bloqueo_segundos)
+        # El bloqueo se renueva al EMPEZAR cada trabajo del lote (otro worker no retoma uno que
+        # sigue en curso) y solo si el trabajo sigue siendo mío: UPDATE condicional.
+        condiciones = [Trabajo.id == trabajo_id, Trabajo.estado == "en_proceso"]
+        if trabajador is not None:  # sin nombre (llamadas heredadas) solo se exige en_proceso
+            condiciones.append(Trabajo.bloqueado_por == trabajador[:80])
+        renovado = db.execute(
+            update(Trabajo)
+            .where(*condiciones)
+            .values(
+                bloqueado_hasta=ahora + timedelta(seconds=get_settings().worker_bloqueo_segundos)
+            )
+            .execution_options(synchronize_session=False)
+        )
         db.commit()
+        if renovado.rowcount != 1:
+            return
+        trabajo = db.get(Trabajo, trabajo_id)
+        assert trabajo is not None
+        tipo, payload = trabajo.tipo, dict(trabajo.payload or {})
         manejador = registro.MANEJADORES.get(tipo)
         try:
             if manejador is None:
@@ -246,7 +270,7 @@ def ejecutar_pendientes(db: Session, ahora: datetime | None = None, max_trabajos
         if not tomados:
             break
         for t in tomados:
-            ejecutar(fabrica, t.id, lambda: momento)
+            ejecutar(fabrica, t.id, lambda: momento, "ejecutar_pendientes")
             ejecutados += 1
     db.commit()
     return ejecutados

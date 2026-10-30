@@ -196,7 +196,7 @@ def test_p3_dos_workers_ejecutan_cada_trabajo_exactamente_una_vez(pg):
                     if not tomados:
                         return
                     for tid in tomados:
-                        cola.ejecutar(pg, tid, lambda: AHORA)
+                        cola.ejecutar(pg, tid, lambda: AHORA, nombre)
 
             return _f
 

@@ -354,3 +354,40 @@ def test_s6_supervision_no_lista_workers_sin_latido_reciente(client, h_admin, db
     db.commit()
     r = client.get(f"{API}/supervision/trabajos", headers=h_admin).json()
     assert [(t["trabajador"], t["activo"]) for t in r["trabajadores"]] == [("reciente", False)]
+
+
+def test_s4_exclusion_del_titular_posterior_bloquea_autorizaciones_antiguas(
+    client, h_admin, db, reloj
+):
+    """Sin autorización revocada que lo evidencie, una exclusión del titular posterior basta."""
+    db.add(
+        Exclusion(
+            numero_e164=NUMERO,
+            motivo="solicitud_titular",
+            aplica_a="todas",
+            canal="whatsapp",
+            origen="sistema",
+            creado_en=reloj() - timedelta(days=1),
+        )
+    )
+    db.add(
+        Exclusion(
+            numero_e164="+573109998888",
+            motivo="manual",  # no es solicitud del titular: no bloquea
+            aplica_a="todas",
+            canal="todos",
+            origen="sistema",
+            creado_en=reloj() - timedelta(days=1),
+        )
+    )
+    db.commit()
+    cuerpo = {"telefono": "3001234567", "finalidad": "cobranza", "evidencia": "formulario viejo"}
+    viejo = {"otorgada_en": (reloj() - timedelta(days=10)).isoformat()}
+    r = client.post(f"{API}/autorizaciones", json={**cuerpo, **viejo}, headers=h_admin)
+    assert (
+        r.status_code == 409 and r.json()["error"]["codigo"] == "AUTORIZACION_REVOCADA_POR_OPT_OUT"
+    )
+    r = client.post(
+        f"{API}/autorizaciones", json={**cuerpo, "telefono": "3109998888", **viejo}, headers=h_admin
+    )
+    assert r.status_code == 201

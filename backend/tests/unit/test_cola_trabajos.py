@@ -186,7 +186,7 @@ def test_periodicos_no_se_duplican(db, session_factory):
     # Tomado el periódico (en proceso) tampoco se duplica; al terminar se programa el siguiente.
     (tomado,) = cola.tomar(db, "w", T0 + timedelta(seconds=301), 5)
     assert periodicos.programar(db, T0 + timedelta(seconds=302)) == 0
-    cola.ejecutar(session_factory, tomado.id, lambda: T0 + timedelta(seconds=303))
+    cola.ejecutar(session_factory, tomado.id, lambda: T0 + timedelta(seconds=303), "w")
     db.expire_all()
     assert periodicos.programar(db, T0 + timedelta(seconds=304)) == 1
 
@@ -219,7 +219,7 @@ def test_payloads_solo_ids(db):
 def test_ejecutar_con_sesiones_independientes(db, session_factory, manejadores):
     t = encolar(db, "test.ok", {"n": 7})
     (tomado,) = cola.tomar(db, "w", T0, 1)
-    cola.ejecutar(session_factory, tomado.id, lambda: T0)
+    cola.ejecutar(session_factory, tomado.id, lambda: T0, "w")
     db.expire_all()
     assert db.get(Trabajo, t.id).estado == "completado"
     assert manejadores == [("ok", 7)]
