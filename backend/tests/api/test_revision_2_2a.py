@@ -258,7 +258,7 @@ def test_s6_proveedor_falso_exige_token_propio_fuera_de_test_y_desarrollo(entorn
     from app.config import TOKEN_TWILIO_EJEMPLO
 
     base = {"_env_file": None, "entorno": entorno, "jwt_secreto": "x" * 32,
-            "telefonia_proveedor": "falso",
+            "telefonia_proveedor": "falso", "ia_habilitada": False,
             "public_base_url": "https://app.empresa.co"}  # fmt: skip
     for token in (TOKEN_TWILIO_EJEMPLO, ""):
         with pytest.raises(ValueError):

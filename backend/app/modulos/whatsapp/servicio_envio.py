@@ -78,10 +78,13 @@ def _nuevo_saliente(
     )
 
 
-def crear_automatico(db: Session, conv: Conversacion, texto: str, ahora: datetime) -> Mensaje:
-    """Mensaje automático (`autor=sistema`): acuse inmediato de un mensaje del cliente, exento
-    de `decidir_respuesta` pero sujeto a la ventana al enviarse. No crea intentos."""
-    m = _nuevo_saliente(conv, ahora, autor="sistema", usuario_id=None, tipo="texto", cuerpo=texto)
+def crear_automatico(
+    db: Session, conv: Conversacion, texto: str, ahora: datetime, autor: str = "sistema"
+) -> Mensaje:
+    """Mensaje automático (`autor=sistema`; `ia` para el texto del agente): acuse inmediato de un
+    mensaje del cliente, exento de `decidir_respuesta` al crearse pero sujeto a la ventana al
+    enviarse (el autor `ia` se revalida como `agente` al enviar). No crea intentos."""
+    m = _nuevo_saliente(conv, ahora, autor=autor, usuario_id=None, tipo="texto", cuerpo=texto)
     db.add(m)
     db.flush()
     encolar_envio(db, m, ahora)
@@ -595,7 +598,16 @@ def ejecutar_envio(db: Session, payload: dict[str, Any], ahora: datetime) -> Non
     if m.estado not in ("pendiente", "retenido"):
         db.rollback()
         return
-    if conv.estado == "cerrada" and not (m.autor == "sistema" and conv.motivo_cierre == "opt_out"):
+    # En conversación cerrada solo se envía la confirmación de opt-out y, tras un cierre
+    # `sistema` (de la IA), los mensajes `ia`/`sistema` creados antes del cierre (despedida,
+    # constancia).
+    entregable_tras_cierre = (m.autor == "sistema" and conv.motivo_cierre == "opt_out") or (
+        m.autor in ("ia", "sistema")
+        and conv.motivo_cierre == "sistema"
+        and conv.cerrada_en is not None
+        and m.creado_en <= conv.cerrada_en
+    )
+    if conv.estado == "cerrada" and not entregable_tras_cierre:
         m.estado = "cancelado"
         conversaciones.publicar_mensaje(db, conv, m, "estado")
         db.commit()
@@ -605,7 +617,7 @@ def ejecutar_envio(db: Session, payload: dict[str, Any], ahora: datetime) -> Non
     if m.tipo == "texto":
         if not ventana_abierta(conv, ahora, margen):
             fallo = "VENTANA_CERRADA"
-        elif m.autor == "agente":
+        elif m.autor in ("agente", "ia"):
             if cumplimiento_wa.opt_out_posterior(db, conv):
                 fallo = "CLIENTE_OPT_OUT"
             else:

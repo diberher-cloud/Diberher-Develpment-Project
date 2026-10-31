@@ -54,10 +54,16 @@ def validar_transicion(actual: Dueno, nuevo: Dueno) -> None:
 
 
 def decidir_dueno_inicial(
-    conv: object, campana: object | None, abre_agente_id: int | None = None
+    conv: object,
+    campana: object | None,
+    abre_agente_id: int | None = None,
+    ia_disponible: bool = False,
 ) -> Dueno:
-    """Dueño al abrir una conversación. 2B: siempre `SinAsignar`, salvo que la abra un agente con
-    una plantilla (`Humano`). 2C cambia SOLO esta función (campaña con IA activa → `IA`)."""
+    """Dueño al abrir una conversación: `Humano` si la abre un agente con una plantilla; `IA` si
+    la abre el cliente, hay campaña (registro resuelto) y la IA está disponible para ella (2C);
+    si no, `SinAsignar`."""
     if abre_agente_id is not None:
         return Humano(abre_agente_id)
+    if campana is not None and ia_disponible:
+        return IA()
     return SinAsignar()

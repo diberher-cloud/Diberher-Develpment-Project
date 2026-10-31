@@ -14,6 +14,7 @@ def test_secreto_largo_ok():
         _env_file=None,
         entorno="produccion",
         jwt_secreto="x" * 32,
+        ia_habilitada=False,
         twilio_auth_token="token-real-de-produccion",
         public_base_url="https://app.empresa.co",
     )
@@ -72,7 +73,12 @@ def test_public_base_url_con_barra_final_se_rechaza():
 
 
 def test_produccion_exige_token_distinto_del_ejemplo_y_https():
-    base = {"_env_file": None, "entorno": "produccion", "jwt_secreto": "x" * 32}
+    base = {
+        "_env_file": None,
+        "entorno": "produccion",
+        "jwt_secreto": "x" * 32,
+        "ia_habilitada": False,
+    }
     with pytest.raises(ValidationError):
         Settings(
             **base, twilio_auth_token=TOKEN_TWILIO_EJEMPLO, public_base_url="https://app.empresa.co"

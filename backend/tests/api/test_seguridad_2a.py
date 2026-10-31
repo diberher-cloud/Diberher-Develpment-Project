@@ -312,9 +312,9 @@ def test_simulacion_no_aparece_en_openapi_ni_responde_en_produccion_ni_con_twili
     from app.main import create_app
 
     casos = [
-        dict(entorno="produccion", twilio_auth_token="token-real", public_base_url="https://x.co",
+        dict(entorno="produccion", ia_habilitada=False, twilio_auth_token="token-real", public_base_url="https://x.co",
              jwt_secreto="x" * 32),
-        dict(entorno="produccion", twilio_auth_token="token-real", public_base_url="https://x.co",
+        dict(entorno="produccion", ia_habilitada=False, twilio_auth_token="token-real", public_base_url="https://x.co",
              jwt_secreto="x" * 32, telefonia_proveedor="falso"),
         dict(entorno="desarrollo", jwt_secreto="x" * 32, telefonia_proveedor="twilio",
              twilio_account_sid="AC1", twilio_auth_token="t", twilio_api_key_sid="SK1",

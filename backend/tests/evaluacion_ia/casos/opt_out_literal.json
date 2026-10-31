@@ -1,0 +1,42 @@
+{
+  "id": "opt_out_literal",
+  "version": 1,
+  "categoria": "opt_out",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "STOP"
+  ],
+  "guion_llm_falso": [],
+  "pasos_por_turno": [
+    0
+  ],
+  "expectativas": {
+    "opt_out": "whatsapp",
+    "conversacion_cerrada": true,
+    "motivo_cierre": "opt_out",
+    "textos_enviados_contienen_alguno": [
+      "Hemos registrado su solicitud"
+    ],
+    "max_mensajes_ia": 0
+  }
+}

@@ -186,6 +186,7 @@ def cambiar_dueno(
     motivo_cola: str | None,
     actor_id: int | None,
     ahora: datetime,
+    resumen: str | None = None,
 ) -> None:
     """Transición de dueño con efectos en la cola, auditoría y eventos (misma transacción).
 
@@ -198,7 +199,7 @@ def cambiar_dueno(
     actual = dueno_mod.de_conversacion(conv)
     if actual == nuevo:
         if isinstance(nuevo, SinAsignar) and motivo_cola is not None:
-            _recolocar_en_cola(db, conv, motivo_cola, ahora)
+            _recolocar_en_cola(db, conv, motivo_cola, ahora, resumen)
         return
     dueno_mod.validar_transicion(actual, nuevo)
     anterior_usuario = conv.usuario_asignado_id
@@ -234,7 +235,7 @@ def cambiar_dueno(
             raise ValueError("Motivo de cola desconocido.")
         if fila is not None:
             atencion.cerrar(db, fila, ahora)
-        atencion.abrir(db, conv, motivo, ahora)
+        atencion.abrir(db, conv, motivo, ahora, resumen=resumen)
     elif isinstance(nuevo, Humano):
         if fila is not None:
             atencion.asignar(db, fila, nuevo.usuario_id, ahora)
@@ -256,14 +257,16 @@ def cambiar_dueno(
     publicar_estado(db, conv, anterior_usuario)
 
 
-def _recolocar_en_cola(db: Session, conv: Conversacion, motivo: str, ahora: datetime) -> None:
+def _recolocar_en_cola(
+    db: Session, conv: Conversacion, motivo: str, ahora: datetime, resumen: str | None = None
+) -> None:
     fila = atencion.fila_activa(db, conv.id)
     if fila is not None and fila.motivo == motivo and fila.campana_id == conv.campana_id:
         return
     creado = fila.creado_en if fila is not None else None
     if fila is not None:
         atencion.cerrar(db, fila, ahora)
-    atencion.abrir(db, conv, motivo, ahora, creado)
+    atencion.abrir(db, conv, motivo, ahora, creado, resumen)
 
 
 # ---- Cierre ------------------------------------------------------------------------------------
@@ -353,7 +356,9 @@ def tomar(db: Session, usuario: Usuario, conversacion_id: int, ahora: datetime) 
     exigir_abierta(conv)
     if es_dueno(conv, usuario):
         return conv
-    if conv.atendida_por != "sin_asignar":
+    # Administradores y supervisores también pueden tomar una conversación atendida por la IA.
+    desde_ia = conv.atendida_por == "ia" and usuario.rol in ("administrador", "supervisor")
+    if conv.atendida_por != "sin_asignar" and not desde_ia:
         raise ErrorApp(409, "CONVERSACION_ASIGNADA", "La conversación ya la atiende otro usuario.")
     atencion.exigir_capacidad(db, usuario)
     try:

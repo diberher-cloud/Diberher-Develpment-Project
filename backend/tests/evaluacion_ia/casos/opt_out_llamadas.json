@@ -1,0 +1,57 @@
+{
+  "id": "opt_out_llamadas",
+  "version": 1,
+  "categoria": "opt_out",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "por WhatsApp sí, pero no me llamen"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "registrar_opt_out",
+          "input": {
+            "alcance": "llamadas",
+            "cita_cliente": "no me llamen"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Entendido, no le llamaremos. ¿En qué más le ayudo?"
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    2
+  ],
+  "expectativas": {
+    "opt_out": "llamadas",
+    "conversacion_cerrada": false
+  }
+}

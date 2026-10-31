@@ -1,0 +1,112 @@
+{
+  "id": "venta_oferta_valida",
+  "version": 1,
+  "categoria": "venta",
+  "canal": "chat",
+  "campana": {
+    "tipo": "venta",
+    "reglas": "por_defecto_venta",
+    "tratamiento": "usted",
+    "instrucciones": null,
+    "ofertas": [
+      {
+        "codigo": "SEG-HOGAR",
+        "nombre": "Seguro hogar",
+        "descripcion": "Cobertura de incendio y robo.",
+        "precio": "89900.00",
+        "descuento_max_pct": "10.00",
+        "max_unidades": 2,
+        "condiciones": "Vigencia anual."
+      }
+    ]
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {}
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "Mi cédula es 1020304050",
+    "Quiero 2 seguros con 10% de descuento",
+    "Sí, los compro"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304050"
+          }
+        }
+      ]
+    },
+    {
+      "herramientas": [
+        {
+          "name": "consultar_ofertas",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "texto": "Tenemos el Seguro hogar a $ 89.900, con descuento máximo del 10 %."
+    },
+    {
+      "herramientas": [
+        {
+          "name": "cotizar_venta",
+          "input": {
+            "codigo_oferta": "SEG-HOGAR",
+            "unidades": 2,
+            "descuento_porcentaje": "10.00"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Dos unidades con 10 % de descuento: $ 161.820 en total. ¿Confirma?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "registrar_venta",
+          "input": {
+            "codigo_oferta": "SEG-HOGAR",
+            "unidades": 2,
+            "descuento_porcentaje": "10.00",
+            "confirmacion_cliente": "Sí, los compro"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Listo, quedó registrada su compra."
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    3,
+    2,
+    2
+  ],
+  "expectativas": {
+    "venta_registrada": true,
+    "herramientas_llamadas": [
+      "consultar_ofertas",
+      "cotizar_venta",
+      "registrar_venta"
+    ],
+    "textos_enviados_contienen_alguno": [
+      "Constancia de su compra"
+    ],
+    "resultado_tipificacion": "venta"
+  }
+}

@@ -244,6 +244,12 @@ def alertas(db: Session, conv: Conversacion) -> list[MotivoSalida]:
     return resultado
 
 
+def _estado_ia(db: Session, conv: Conversacion, usuario: Usuario):
+    from app.modulos.agente_ia.estado import estado_ia
+
+    return estado_ia(db, conv, usuario)
+
+
 def conversacion_salida(
     db: Session, conv: Conversacion, usuario: Usuario, ahora: datetime
 ) -> ConversacionSalida:
@@ -262,4 +268,5 @@ def conversacion_salida(
         puede_responder=not motivos,
         motivos_no_responder=motivos,
         alertas=alertas(db, conv),
+        ia=_estado_ia(db, conv, usuario),
     )

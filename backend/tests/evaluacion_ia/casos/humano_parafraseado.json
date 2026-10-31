@@ -1,0 +1,55 @@
+{
+  "id": "humano_parafraseado",
+  "version": 1,
+  "categoria": "humano",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Prefiero que me atienda alguien de carne y hueso"
+  ],
+  "guion_llm_falso": [
+    {
+      "herramientas": [
+        {
+          "name": "derivar_a_humano",
+          "input": {
+            "motivo": "solicitud_cliente",
+            "resumen": "El cliente prefiere hablar con una persona."
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Con gusto, un asesor continuará la conversación."
+    }
+  ],
+  "pasos_por_turno": [
+    2
+  ],
+  "expectativas": {
+    "derivado": true,
+    "motivo_derivacion": "solicitud_cliente",
+    "herramientas_llamadas": [
+      "derivar_a_humano"
+    ]
+  }
+}

@@ -160,6 +160,7 @@ def test_simulacion_inexistente_con_produccion_o_con_proveedor_twilio():
     casos = [
         dict(
             entorno="produccion",
+            ia_habilitada=False,
             twilio_auth_token="token-real",
             public_base_url="https://x.co",
             jwt_secreto="x" * 32,

@@ -141,3 +141,9 @@ def clasificar(
     if any(p.fullmatch(normalizado) for p in _PATRONES_VOZ):
         return "voz"
     return None
+
+
+def normalizar_sin_cortesia(texto: str) -> str:
+    """Normalización base (sin tildes, signos ni mayúsculas) SIN quitar fórmulas de cortesía.
+    La usan las citas de la IA (fase-2c.md §4.6)."""
+    return _base(texto)

@@ -15,6 +15,8 @@ from app import (
 from app.config import VERSION, Settings, get_settings
 from app.errores import registrar_manejadores
 from app.middleware import ProteccionMiddleware
+from app.modulos.agente_ia.router import router as ia_router
+from app.modulos.agente_ia.router_supervision import router as ia_supervision_router
 from app.modulos.auth.router import router as auth_router
 from app.modulos.campanas.router import router as campanas_router
 from app.modulos.clientes.router import router as clientes_router
@@ -101,6 +103,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         conversaciones_router,
         router_atencion,
         supervision_router,
+        ia_router,
+        ia_supervision_router,
         ws_router,
     ]
     if settings.telefonia_proveedor == "falso" and settings.entorno != "produccion":

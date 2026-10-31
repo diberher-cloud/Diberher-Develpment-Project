@@ -16,6 +16,7 @@ from app.modulos.clientes.modelos import CampanaCliente, Cliente, Telefono
 from app.modulos.consola import servicio as consola
 from app.modulos.consola import tipificacion
 from app.modulos.consola.esquemas import TipificacionDatos, TipificacionSalida
+from app.modulos.consola.modelos import Tipificacion
 from app.modulos.conversaciones import servicio
 from app.modulos.conversaciones.modelos import Conversacion, Mensaje
 from app.modulos.cumplimiento.modelos import IntentoContacto
@@ -49,7 +50,18 @@ def cerrar_conversacion(
         servicio.exigir_dueno(conv, usuario)
     servicio.exigir_abierta(conv)
     tiene_registro = conv.campana_cliente_id is not None
-    if tiene_registro and datos is None:
+    ya_tipificada = (
+        db.scalar(select(Tipificacion.id).where(Tipificacion.conversacion_id == conv.id))
+        is not None
+    )
+    if ya_tipificada and datos is not None:
+        raise ErrorApp(
+            422,
+            "VALIDACION",
+            "Los datos enviados no son válidos.",
+            [detalle("tipificacion", "La conversación ya tiene una gestión registrada.")],
+        )
+    if tiene_registro and datos is None and not ya_tipificada:
         raise ErrorApp(
             422,
             "VALIDACION",

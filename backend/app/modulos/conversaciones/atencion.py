@@ -65,11 +65,13 @@ def abrir(
     motivo: str,
     ahora: datetime,
     creado_en: datetime | None = None,
+    resumen: str | None = None,
 ) -> ColaAtencion:
     fila = ColaAtencion(
         conversacion_id=conv.id,
         campana_id=conv.campana_id,
         motivo=motivo,
+        resumen=resumen[:500] if resumen else None,
         prioridad=prioridad_de(motivo),
         estado="pendiente",
         clave_activa=str(conv.id),

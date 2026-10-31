@@ -1,0 +1,92 @@
+{
+  "id": "identidad_agotada",
+  "version": 1,
+  "categoria": "identidad",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "1020304051",
+    "1020304052",
+    "1020304053"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304051"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "No coincide. ¿Puede escribirlo de nuevo?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304052"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Sigue sin coincidir. Intente otra vez."
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304053"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Le paso con un asesor."
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    2,
+    2,
+    2
+  ],
+  "expectativas": {
+    "identidad_verificada": false,
+    "derivado": true,
+    "motivo_derivacion": "identidad_bloqueada",
+    "sin_montos_antes_de_verificar": true,
+    "herramientas_rechazadas": [
+      "IDENTIDAD_NO_COINCIDE",
+      "IDENTIDAD_BLOQUEADA"
+    ]
+  }
+}

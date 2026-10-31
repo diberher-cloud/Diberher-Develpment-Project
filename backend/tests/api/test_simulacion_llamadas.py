@@ -124,8 +124,8 @@ def test_evento_invalido_422(client, ctx, db):
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"entorno": "produccion", "twilio_auth_token": "token-real", "public_base_url": "https://x.co",
-         "jwt_secreto": "x" * 32},
+        {"entorno": "produccion", "ia_habilitada": False, "twilio_auth_token": "token-real",
+         "public_base_url": "https://x.co", "jwt_secreto": "x" * 32},
         {"entorno": "test", "telefonia_proveedor": "twilio", "twilio_account_sid": "AC1",
          "twilio_auth_token": "t", "twilio_api_key_sid": "SK1", "twilio_api_key_secret": "s",
          "twilio_twiml_app_sid": "AP1", "twilio_numero_saliente": "+576015550000"},

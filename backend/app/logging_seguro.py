@@ -26,7 +26,15 @@ class MascaraCredencialesFilter(logging.Filter):
 
 
 def instalar() -> None:
+    silenciar_sdks()
     for nombre in ("uvicorn.error", "uvicorn.access", "uvicorn"):
         logger = logging.getLogger(nombre)
         if not any(isinstance(f, MascaraCredencialesFilter) for f in logger.filters):
             logger.addFilter(MascaraCredencialesFilter())
+
+
+def silenciar_sdks() -> None:
+    """Los loggers del SDK de Anthropic y de sus clientes HTTP vuelcan peticiones en DEBUG
+    (textos de clientes, prompts): se dejan en WARNING (fase-2c.md §4.12)."""
+    for nombre in ("anthropic", "httpx2", "httpx", "httpcore2", "httpcore"):
+        logging.getLogger(nombre).setLevel(logging.WARNING)

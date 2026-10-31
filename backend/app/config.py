@@ -1,16 +1,49 @@
 """Configuración de la aplicación (variables de entorno, ver .env.example)."""
 
+import json
 import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 VERSION = "0.1.0"
 SECRETO_EJEMPLO = "cambia-esto-por-un-secreto-de-32-caracteres-o-mas"
 TOKEN_TWILIO_EJEMPLO = "token-falso-solo-desarrollo"
 _E164 = re.compile(r"\+[1-9]\d{7,14}")
+
+# USD por millón de tokens (fase-2c.md §4.11); se pueden sustituir con IA_PRECIOS_JSON.
+PRECIOS_IA_POR_DEFECTO: dict[str, dict[str, float]] = {
+    "claude-opus-5-5": {
+        "entrada": 4.0,
+        "salida": 20.0,
+        "cache_escritura_5m": 5.0,
+        "cache_escritura_1h": 8.0,
+        "cache_lectura": 0.4,
+    },
+    "claude-sonnet-5-5": {
+        "entrada": 2.0,
+        "salida": 10.0,
+        "cache_escritura_5m": 2.5,
+        "cache_escritura_1h": 4.0,
+        "cache_lectura": 0.2,
+    },
+    "claude-haiku-5-5": {
+        "entrada": 0.10,
+        "salida": 0.50,
+        "cache_escritura_5m": 0.125,
+        "cache_escritura_1h": 0.20,
+        "cache_lectura": 0.01,
+    },
+}
+CLAVES_PRECIO = (
+    "entrada",
+    "salida",
+    "cache_escritura_5m",
+    "cache_escritura_1h",
+    "cache_lectura",
+)
 
 
 class Settings(BaseSettings):
@@ -91,6 +124,45 @@ class Settings(BaseSettings):
     whatsapp_media_concurrencia: int = 4
     whatsapp_media_duracion_segundos: int = 30
 
+    # Agente IA (Fase 2C, fase-2c.md §8)
+    ia_proveedor: Literal["falso", "anthropic"] = "falso"
+    anthropic_api_key: SecretStr = SecretStr("")
+    ia_habilitada: bool = True
+    ia_modelos_permitidos: str = "claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5"
+    ia_modelos_sin_system_intermedio: str = ""
+    ia_modelo_por_defecto: str = "claude-opus-5-5"
+    ia_esfuerzo_por_defecto: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    ia_max_tokens: int = 8000
+    ia_max_iteraciones: int = 8
+    ia_timeout_segundos: int = 45
+    ia_turno_max_segundos: int = 240
+    ia_reintento_arriendo_segundos: int = 2
+    ia_fallback_rechazo: bool = False
+    ia_cache_ttl: Literal["5m", "1h"] = "5m"
+    ia_debounce_segundos: int = 3
+    ia_debounce_max_segundos: int = 10
+    ia_max_caracteres_entrada: int = 2000
+    ia_max_mensajes_turno: int = 20
+    ia_max_caracteres_salida: int = 1000
+    ia_precios_json: str = ""
+    ia_aviso_asistente: str = (
+        "Le atiende el asistente virtual de Mi Empresa S.A.S. "
+        "Puede pedir hablar con un asesor en cualquier momento."
+    )
+    ia_frases_humano: str = ""
+    ia_payload_asesor: str = "ASESOR"
+    ia_mensaje_traspaso: str = (
+        "Le comunico con un asesor, que continuará la conversación por este medio."
+    )
+    ia_dominios_permitidos: str = ""
+    ia_texto_retracto: str = ""
+    ia_alerta_presupuesto_pct: int = 80
+    ia_errores_umbral: int = 5
+    ia_errores_ventana_minutos: int = 10
+    ia_exigir_evaluacion_online: bool = False
+    ia_umbral_online_negociacion: float = 0.90
+    retencion_transcripciones_dias: int = 365
+
     @model_validator(mode="after")
     def _validar_secreto(self) -> "Settings":
         if self.entorno != "test" and len(self.jwt_secreto) < 32:
@@ -101,6 +173,7 @@ class Settings(BaseSettings):
             self.jwt_secreto = "secreto-solo-para-tests-0123456789abcdef"
         self._validar_telefonia()
         self._validar_whatsapp()
+        self._validar_ia()
         return self
 
     def _validar_telefonia(self) -> None:
@@ -184,6 +257,93 @@ class Settings(BaseSettings):
         for nombre, texto in mensajes:
             if len(texto) > 1000:
                 raise ValueError(f"{nombre} no puede superar 1000 caracteres.")
+
+    # ---- Agente IA ---------------------------------------------------------------------------
+    @staticmethod
+    def _lista(texto: str, separador: str = ",") -> list[str]:
+        return [x.strip() for x in texto.split(separador) if x.strip()]
+
+    @property
+    def modelos_ia_permitidos(self) -> list[str]:
+        return self._lista(self.ia_modelos_permitidos)
+
+    @property
+    def modelos_ia_sin_system(self) -> frozenset[str]:
+        return frozenset(self._lista(self.ia_modelos_sin_system_intermedio))
+
+    @property
+    def dominios_ia_permitidos(self) -> frozenset[str]:
+        return frozenset(d.lower() for d in self._lista(self.ia_dominios_permitidos))
+
+    @property
+    def precios_ia(self) -> dict[str, dict[str, float]]:
+        """Precios por modelo (USD por millón de tokens): los de IA_PRECIOS_JSON, si hay, sobre
+        los valores por defecto."""
+        precios = {m: dict(p) for m, p in PRECIOS_IA_POR_DEFECTO.items()}
+        if self.ia_precios_json.strip():
+            for modelo, p in json.loads(self.ia_precios_json).items():
+                precios[modelo] = {**precios.get(modelo, {}), **p}
+        return precios
+
+    def _validar_ia(self) -> None:
+        clave = self.anthropic_api_key.get_secret_value()
+        if self.ia_proveedor == "anthropic" and not clave and self.entorno != "test":
+            raise ValueError("IA_PROVEEDOR=anthropic exige ANTHROPIC_API_KEY.")
+        if self.entorno == "produccion" and self.ia_proveedor == "falso" and self.ia_habilitada:
+            raise ValueError(
+                "En producción IA_PROVEEDOR=falso exige IA_HABILITADA=false "
+                "(o IA_PROVEEDOR=anthropic)."
+            )
+        permitidos = self.modelos_ia_permitidos
+        if not permitidos:
+            raise ValueError("IA_MODELOS_PERMITIDOS no puede estar vacío.")
+        if self.ia_modelo_por_defecto not in permitidos:
+            raise ValueError("IA_MODELO_POR_DEFECTO debe estar en IA_MODELOS_PERMITIDOS.")
+        if self.ia_precios_json.strip():
+            try:
+                cargado = json.loads(self.ia_precios_json)
+                ok = isinstance(cargado, dict) and all(
+                    isinstance(p, dict)
+                    and all(k in CLAVES_PRECIO and isinstance(v, int | float) for k, v in p.items())
+                    for p in cargado.values()
+                )
+            except ValueError:
+                ok = False
+            if not ok:
+                raise ValueError("IA_PRECIOS_JSON no es un JSON de precios válido.")
+        precios = self.precios_ia
+        for modelo in permitidos:
+            if modelo not in precios or any(k not in precios[modelo] for k in CLAVES_PRECIO):
+                raise ValueError(f"El modelo {modelo} de IA_MODELOS_PERMITIDOS no tiene precio.")
+        if self.ia_turno_max_segundos >= self.worker_bloqueo_segundos:
+            raise ValueError("IA_TURNO_MAX_SEGUNDOS debe ser menor que WORKER_BLOQUEO_SEGUNDOS.")
+        if self.ia_debounce_segundos > self.ia_debounce_max_segundos:
+            raise ValueError("IA_DEBOUNCE_SEGUNDOS no puede superar IA_DEBOUNCE_MAX_SEGUNDOS.")
+        rangos = (
+            ("IA_MAX_TOKENS", self.ia_max_tokens, 1000, 64000),
+            ("IA_MAX_ITERACIONES", self.ia_max_iteraciones, 1, 20),
+            ("IA_TIMEOUT_SEGUNDOS", self.ia_timeout_segundos, 5, 120),
+            ("IA_TURNO_MAX_SEGUNDOS", self.ia_turno_max_segundos, 10, 3600),
+            ("IA_REINTENTO_ARRIENDO_SEGUNDOS", self.ia_reintento_arriendo_segundos, 1, 60),
+            ("IA_DEBOUNCE_SEGUNDOS", self.ia_debounce_segundos, 0, 30),
+            ("IA_DEBOUNCE_MAX_SEGUNDOS", self.ia_debounce_max_segundos, 0, 120),
+            ("IA_MAX_CARACTERES_ENTRADA", self.ia_max_caracteres_entrada, 200, 10000),
+            ("IA_MAX_CARACTERES_SALIDA", self.ia_max_caracteres_salida, 200, 4096),
+            ("IA_MAX_MENSAJES_TURNO", self.ia_max_mensajes_turno, 1, 50),
+            ("IA_ALERTA_PRESUPUESTO_PCT", self.ia_alerta_presupuesto_pct, 1, 99),
+            ("IA_ERRORES_UMBRAL", self.ia_errores_umbral, 1, 100),
+            ("IA_ERRORES_VENTANA_MINUTOS", self.ia_errores_ventana_minutos, 1, 120),
+            ("IA_UMBRAL_ONLINE_NEGOCIACION", self.ia_umbral_online_negociacion, 0, 1),
+        )
+        for nombre, valor, minimo, maximo in rangos:
+            if not minimo <= valor <= maximo:
+                raise ValueError(f"{nombre} debe estar entre {minimo} y {maximo}.")
+        for nombre, texto in (
+            ("IA_AVISO_ASISTENTE", self.ia_aviso_asistente),
+            ("IA_MENSAJE_TRASPASO", self.ia_mensaje_traspaso),
+        ):
+            if not texto.strip() or len(texto) > 500:
+                raise ValueError(f"{nombre} no puede estar vacío ni superar 500 caracteres.")
 
     @property
     def lista_cors(self) -> list[str]:

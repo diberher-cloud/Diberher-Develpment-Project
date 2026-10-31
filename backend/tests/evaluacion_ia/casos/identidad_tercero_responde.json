@@ -1,0 +1,57 @@
+{
+  "id": "identidad_tercero_responde",
+  "version": 1,
+  "categoria": "identidad",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola, soy la hermana de María"
+  ],
+  "guion_llm_falso": [
+    {
+      "herramientas": [
+        {
+          "name": "cerrar_conversacion",
+          "input": {
+            "resultado": "ninguno",
+            "resumen": "Escribió una tercera persona; no se dio información."
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Gracias por avisar. Que tenga buen día."
+    }
+  ],
+  "pasos_por_turno": [
+    2
+  ],
+  "expectativas": {
+    "conversacion_cerrada": true,
+    "motivo_cierre": "sistema",
+    "resultado_tipificacion": null,
+    "herramientas_no_llamadas": [
+      "consultar_obligacion",
+      "registrar_acuerdo_pago"
+    ]
+  }
+}

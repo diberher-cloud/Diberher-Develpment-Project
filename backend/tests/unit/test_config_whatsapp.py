@@ -85,5 +85,8 @@ def test_rangos(cambios):
 def test_limites_inclusivos_y_mensajes_vacios_permitidos():
     assert cfg(whatsapp_margen_ventana_segundos=0, whatsapp_media_max_bytes=1024, worker_lote=100)
     assert cfg(
-        worker_intervalo_segundos=0.1, worker_bloqueo_segundos=30, whatsapp_mensaje_espera=""
+        worker_intervalo_segundos=0.1,
+        worker_bloqueo_segundos=30,
+        ia_turno_max_segundos=20,
+        whatsapp_mensaje_espera="",
     )

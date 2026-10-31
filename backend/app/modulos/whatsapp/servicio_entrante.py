@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.integraciones.whatsapp.proveedor import MensajeEntrante, ProveedorWhatsApp
+from app.modulos.agente_ia.configuracion import ia_disponible
 from app.modulos.conversaciones import atencion, resolucion
 from app.modulos.conversaciones import servicio as conversaciones
 from app.modulos.conversaciones.dueno import SinAsignar, decidir_dueno_inicial
@@ -144,7 +145,11 @@ def _abrir_conversacion(
                 numero_empresa=numero_empresa,
                 iniciada_por="cliente",
                 ahora=m.creado_en,
-                dueno=decidir_dueno_inicial(None, cand.campana if cand else None),
+                dueno=decidir_dueno_inicial(
+                    None,
+                    cand.campana if cand else None,
+                    ia_disponible=bool(cand) and ia_disponible(db, cand.campana.id),
+                ),
                 nombre_perfil=nombre_perfil,
                 cliente_id=cand.cliente.id if cand else None,
                 campana_id=cand.campana.id if cand else None,
@@ -250,3 +255,7 @@ def procesar_entrante(db: Session, payload: dict[str, Any], ahora: datetime) -> 
         ):
             servicio_envio.crear_automatico(db, conv, texto, ahora)
             conv.aviso_espera_enviado_en = ahora
+    elif conv.atendida_por == "ia":
+        from app.modulos.agente_ia.trabajos import encolar_turno
+
+        encolar_turno(db, conv.id, ahora)

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.catalogos import ESTADOS_LLAMADA_TERMINALES, ESTADOS_NO_CONTESTADA
 from app.config import get_settings
 from app.errores import ErrorApp, detalle
+from app.modulos.agente_ia.modelos import ConfiguracionIACampana, PromesaCuota
 from app.modulos.auditoria import servicio as auditoria
 from app.modulos.campanas.modelos import Campana
 from app.modulos.clientes.modelos import CampanaCliente, Cliente, Telefono
@@ -62,6 +63,35 @@ def _decimal_positivo(texto: str, campo: str, errores: list[dict]) -> Decimal | 
         errores.append(detalle(campo, "Debe ser mayor que cero."))
         return None
     return valor.quantize(_CENTAVOS)
+
+
+def _validar_limites_ia(
+    db: Session, campana: Campana, cc: CampanaCliente, monto: Decimal, errores: list[dict]
+) -> None:
+    """Promesas de humanos en cobranza con reglas de IA: mismos límites con una cuota
+    (ADR-0015 §1). Lanza `422 FUERA_DE_LIMITES`."""
+    from app.modulos.agente_ia.limites import (
+        ErroresReglas,
+        Obligacion,
+        validar_promesa_humana,
+        validar_reglas_cobranza,
+    )
+
+    cfg = db.get(ConfiguracionIACampana, campana.id)
+    if cfg is None:
+        return
+    try:
+        reglas = validar_reglas_cobranza(cfg.reglas)
+    except ErroresReglas:
+        return
+    mensaje = validar_promesa_humana(Obligacion(cc.saldo_total, cc.saldo_mora), reglas, monto)
+    if mensaje is not None and "saldo total" not in mensaje:
+        raise ErrorApp(
+            422,
+            "FUERA_DE_LIMITES",
+            "La promesa está fuera de los límites de negociación de la campaña.",
+            [detalle("promesa.monto", mensaje)],
+        )
 
 
 def _en_rango(momento: datetime | None) -> bool:
@@ -161,6 +191,8 @@ def validar_comun(
         val.monto = _decimal_positivo(datos.promesa.monto, "promesa.monto", errores)
         if val.monto is not None and cc.saldo_total is not None and val.monto > cc.saldo_total:
             errores.append(detalle("promesa.monto", "No puede superar el saldo total."))
+        if val.monto is not None and campana.tipo == "cobranza":
+            _validar_limites_ia(db, campana, cc, val.monto, errores)
         hoy = ahora.astimezone(zona).date()
         val.fecha_pago = datos.promesa.fecha_pago
         maximo = hoy + timedelta(days=get_settings().promesa_max_dias)
@@ -213,6 +245,27 @@ def validar_comun(
 
 
 @dataclass
+class DetallePromesa:
+    """Acuerdo de la IA: varias cuotas con periodicidad (fase-2c.md §4.8)."""
+
+    monto_total: Decimal
+    cuotas: list[tuple[date, Decimal]]
+    periodicidad: str
+    descuento_porcentaje: Decimal
+    reglas_version: int | None
+
+
+@dataclass
+class DetalleVenta:
+    producto: str
+    valor: Decimal
+    unidades: int
+    oferta_id: int | None
+    descuento_porcentaje: Decimal
+    reglas_version: int | None
+
+
+@dataclass
 class Aplicada:
     tip: Tipificacion
     promesa: PromesaPago | None
@@ -233,9 +286,12 @@ def aplicar_efectos(
     canal: str,
     origen: str,
     actor_id: int | None,
-    gestor_id: int,
+    gestor_id: int | None,
     llamada_id: int | None = None,
     conversacion_id: int | None = None,
+    origen_exclusion: str = "usuario",
+    detalle_promesa: DetallePromesa | None = None,
+    detalle_venta: DetalleVenta | None = None,
 ) -> Aplicada:
     """Crea la tipificación (y promesa/venta/exclusión) y actualiza el registro (B2c: solo
     libera/cierra el registro si la reserva es de `gestor_id` o está libre). Sin commit."""
@@ -276,7 +332,25 @@ def aplicar_efectos(
     db.add(tip)
     db.flush()
     promesa = venta = None
-    if efecto.crear_promesa and val.monto is not None and val.fecha_pago is not None:
+    if efecto.crear_promesa and detalle_promesa is not None:
+        promesa = PromesaPago(
+            tipificacion_id=tip.id,
+            campana_cliente_id=cc.id,
+            monto=detalle_promesa.monto_total,
+            fecha_pago=detalle_promesa.cuotas[0][0],
+            numero_cuotas=len(detalle_promesa.cuotas),
+            descuento_porcentaje=detalle_promesa.descuento_porcentaje,
+            periodicidad=detalle_promesa.periodicidad,
+            reglas_version=detalle_promesa.reglas_version,
+            estado="vigente",
+            origen=origen,
+            creado_en=ahora,
+        )
+        db.add(promesa)
+        db.flush()
+        for numero, (fecha, monto) in enumerate(detalle_promesa.cuotas, start=1):
+            db.add(PromesaCuota(promesa_id=promesa.id, numero=numero, fecha=fecha, monto=monto))
+    elif efecto.crear_promesa and val.monto is not None and val.fecha_pago is not None:
         promesa = PromesaPago(
             tipificacion_id=tip.id,
             campana_cliente_id=cc.id,
@@ -289,7 +363,21 @@ def aplicar_efectos(
             creado_en=ahora,
         )
         db.add(promesa)
-    if efecto.crear_venta and val.valor_venta is not None and val.producto is not None:
+    if efecto.crear_venta and detalle_venta is not None:
+        venta = Venta(
+            tipificacion_id=tip.id,
+            campana_cliente_id=cc.id,
+            producto=detalle_venta.producto,
+            valor=detalle_venta.valor,
+            unidades=detalle_venta.unidades,
+            oferta_id=detalle_venta.oferta_id,
+            descuento_porcentaje=detalle_venta.descuento_porcentaje,
+            reglas_version=detalle_venta.reglas_version,
+            origen=origen,
+            creado_en=ahora,
+        )
+        db.add(venta)
+    elif efecto.crear_venta and val.valor_venta is not None and val.producto is not None:
         venta = Venta(
             tipificacion_id=tip.id,
             campana_cliente_id=cc.id,
@@ -313,6 +401,7 @@ def aplicar_efectos(
                 numero_e164=telefono.numero_e164,
                 motivo="numero_errado",
                 aplica_a="todas",
+                origen=origen_exclusion,
                 creado_por=gestor_id,
             )
             db.add(exclusion)
@@ -323,7 +412,8 @@ def aplicar_efectos(
                 actor_id,
                 "exclusion",
                 exclusion.id,
-                {"motivo": "numero_errado", "aplica_a": "todas"},
+                {"motivo": "numero_errado", "aplica_a": "todas"}
+                | ({"origen": origen_exclusion} if origen_exclusion != "usuario" else {}),
             )
     # B2c: solo se libera/cierra el registro si la reserva sigue siendo de este agente. Si
     # otro agente lo tiene (caso excepcional), se registran la tipificación, el intento, la

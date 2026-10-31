@@ -73,6 +73,15 @@ def encolar(
     return trabajo
 
 
+def posponer(db: Session, trabajo: Trabajo, hasta: datetime) -> None:
+    """Mueve `disponible_desde` SOLO hacia adelante (*debounce* del turno de IA). Sin commit."""
+    actual = trabajo.disponible_desde
+    if actual.tzinfo is None:
+        actual = actual.replace(tzinfo=UTC)
+    if hasta > actual:
+        trabajo.disponible_desde = hasta
+
+
 def tomar(db: Session, trabajador: str, ahora: datetime, limite: int) -> list[Trabajo]:
     """Toma hasta `limite` trabajos disponibles (o con bloqueo caducado) y confirma.
 

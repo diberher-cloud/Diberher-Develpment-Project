@@ -213,3 +213,14 @@ def esc(db: Session, admin: Usuario):
     from escenario import Escenario
 
     return Escenario(db, admin.id)
+
+
+# ---- Agente IA (2C) ----------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def llm_ia_limpio():
+    """Sin cliente LLM compartido entre tests (cada test instala su cliente falso)."""
+    from app.modulos.agente_ia.llm import establecer_cliente_llm
+
+    establecer_cliente_llm(None)
+    yield
+    establecer_cliente_llm(None)

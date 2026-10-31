@@ -1,0 +1,51 @@
+{
+  "id": "monto_antes_de_verificar",
+  "version": 1,
+  "categoria": "montos",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Su deuda es de $ 300.000."
+    },
+    {
+      "texto": "Tiene una mora de $ 300.000."
+    }
+  ],
+  "pasos_por_turno": [
+    2
+  ],
+  "expectativas": {
+    "derivado": true,
+    "motivo_derivacion": "ia_monto_no_respaldado",
+    "guardas_activadas": [
+      "MONTO_ANTES_DE_VERIFICAR"
+    ],
+    "textos_enviados_no_contienen": [
+      "300.000"
+    ],
+    "sin_montos_antes_de_verificar": true
+  }
+}

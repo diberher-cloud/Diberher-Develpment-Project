@@ -18,6 +18,7 @@ from app.catalogos import (
     ESTADOS_AGENTE,
     MOTIVOS_PAUSA,
     ORIGENES_GESTION,
+    PERIODICIDADES,
     RESULTADOS,
     en_lista,
 )
@@ -98,6 +99,10 @@ class PromesaPago(Base):
         CheckConstraint("numero_cuotas BETWEEN 1 AND 36", name="cuotas"),
         CheckConstraint("descuento_porcentaje BETWEEN 0 AND 100", name="descuento"),
         CheckConstraint(
+            "periodicidad IS NULL OR " + en_lista("periodicidad", PERIODICIDADES),
+            name="periodicidad",
+        ),
+        CheckConstraint(
             en_lista("estado", ("vigente", "cumplida", "incumplida", "anulada")), name="estado"
         ),
     )
@@ -113,6 +118,9 @@ class PromesaPago(Base):
     )
     estado: Mapped[str] = mapped_column(String(12), default="vigente", server_default="vigente")
     origen: Mapped[str] = mapped_column(String(10))
+    # Fase 2C
+    periodicidad: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    reglas_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(FechaHoraUTC, default=ahora_utc)
 
 
@@ -121,6 +129,7 @@ class Venta(Base):
     __table_args__ = (
         CheckConstraint("valor > 0", name="valor"),
         CheckConstraint("unidades >= 1", name="unidades"),
+        CheckConstraint("descuento_porcentaje BETWEEN 0 AND 100", name="descuento"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -130,4 +139,10 @@ class Venta(Base):
     valor: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     unidades: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     origen: Mapped[str] = mapped_column(String(10))
+    # Fase 2C
+    oferta_id: Mapped[int | None] = mapped_column(ForeignKey("ofertas_campana.id"), nullable=True)
+    descuento_porcentaje: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=Decimal("0"), server_default="0"
+    )
+    reglas_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(FechaHoraUTC, default=ahora_utc)

@@ -1,6 +1,7 @@
-from typing import Literal
+from decimal import Decimal
+from typing import Annotated, Literal
 
-from pydantic import UUID4, BaseModel, ConfigDict
+from pydantic import UUID4, BaseModel, ConfigDict, PlainSerializer
 
 from app.modulos.consola.esquemas import (
     EstadoRegistro,
@@ -50,6 +51,39 @@ class ConversacionResumen(BaseModel):
     motivo_cierre: MotivoCierre | None
 
 
+Monto6 = Annotated[
+    Decimal, PlainSerializer(lambda v: f"{v:.6f}", return_type=str, when_used="json")
+]
+
+
+class Requisito(BaseModel):
+    codigo: str
+    mensaje: str
+
+
+class GestionIA(BaseModel):
+    resultado: str
+    tipificacion_id: int
+
+
+class UltimoTraspaso(BaseModel):
+    motivo: str
+    resumen: str | None
+    creado_en: FechaHoraZ
+
+
+class EstadoIAConversacion(BaseModel):
+    identidad_verificada: bool
+    turnos: int
+    costo_usd: Monto6 | None
+    modelo: str | None
+    gestion: GestionIA | None
+    aviso_enviado: bool
+    ultimo_traspaso: UltimoTraspaso | None
+    puede_devolver_ia: bool
+    motivos_no_devolver: list[Requisito]
+
+
 class Conversacion(ConversacionResumen):
     campana_cliente_id: int | None
     cliente_id: int | None
@@ -58,6 +92,7 @@ class Conversacion(ConversacionResumen):
     puede_responder: bool
     motivos_no_responder: list[MotivoSalida]
     alertas: list[MotivoSalida]
+    ia: EstadoIAConversacion | None = None
 
 
 class MediaMensaje(BaseModel):

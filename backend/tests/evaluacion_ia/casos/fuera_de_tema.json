@@ -1,0 +1,51 @@
+{
+  "id": "fuera_de_tema",
+  "version": 1,
+  "categoria": "fuera_de_tema",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "¿Qué tal el clima o el fútbol?"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "texto": "Solo puedo ayudarle con su cuenta. ¿Me indica su número de documento?"
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    1
+  ],
+  "expectativas": {
+    "derivado": false,
+    "herramientas_no_llamadas": [
+      "registrar_acuerdo_pago",
+      "cerrar_conversacion",
+      "registrar_opt_out",
+      "derivar_a_humano"
+    ]
+  }
+}

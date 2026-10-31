@@ -40,6 +40,11 @@ def clave_unica_de(tipo: str, payload: dict[str, Any]) -> str | None:
         return f"entrante:{payload['mensaje_id']}"
     if tipo == "whatsapp.enviar_mensaje" and "mensaje_id" in payload:
         return f"enviar:{payload['mensaje_id']}"
+    if tipo == "ia.turno" and "conversacion_id" in payload:
+        return f"turno_ia:{payload['conversacion_id']}"
+    if tipo == "ia.traspasar_campana" and "campana_id" in payload:
+        cid = payload["campana_id"]
+        return f"ia_traspaso:{'global' if cid is None else cid}"
     if tipo in ("conversaciones.cerrar_inactivas", "trabajos.purgar"):
         return f"periodico:{tipo}"
     return None
@@ -58,3 +63,9 @@ def cargar_manejadores() -> None:
     MANEJADORES["conversaciones.cerrar_inactivas"] = cierre_inactivas.cerrar_inactivas
     MANEJADORES["trabajos.purgar"] = mantenimiento.purgar
     AL_AGOTAR["whatsapp.enviar_mensaje"] = servicio_envio.envio_agotado
+    from app.modulos.agente_ia import trabajos as trabajos_ia
+
+    MANEJADORES["ia.turno"] = trabajos_ia.turno
+    MANEJADORES["ia.traspasar_campana"] = trabajos_ia.traspasar_campana
+    MANEJADORES["ia.evaluacion"] = trabajos_ia.evaluacion
+    AL_AGOTAR["ia.turno"] = trabajos_ia.turno_agotado

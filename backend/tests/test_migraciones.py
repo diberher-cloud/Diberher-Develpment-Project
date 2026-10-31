@@ -23,6 +23,11 @@ TABLAS_2B = {
     "plantillas_whatsapp", "conversaciones", "mensajes", "eventos_mensaje", "autorizaciones_canal",
     "cola_atencion", "trabajos", "latidos_worker",
 }  # fmt: skip
+TABLAS_2C = {
+    "configuracion_global", "configuracion_ia_campana", "ofertas_campana", "promesa_cuotas",
+    "uso_ia", "historial_ia", "acciones_ia", "errores_ia", "instrucciones_supervisor",
+    "bloqueos_turno_ia", "evaluaciones_ia",
+}  # fmt: skip
 
 
 def _config(url: str) -> Config:
@@ -42,7 +47,7 @@ def test_upgrade_downgrade_y_semillas(tmp_path):
     ruta = tmp_path / "mig.db"
     cfg = _config(f"sqlite:///{ruta}")
     command.upgrade(cfg, "head")
-    assert _tablas(ruta) == TABLAS | TABLAS_2A | TABLAS_2B
+    assert _tablas(ruta) == TABLAS | TABLAS_2A | TABLAS_2B | TABLAS_2C
     with sqlite3.connect(ruta) as con:
         filas = con.execute(
             "select tipo_campana, version, activa from politicas_cumplimiento order by tipo_campana"
@@ -76,7 +81,7 @@ def test_0002_upgrade_downgrade_upgrade_conserva_datos_de_fase_1(tmp_path):
             "creado_en) values(1,1,'pendiente','{}',2,'2026-01-01')"
         )
     command.upgrade(cfg, "head")
-    assert _tablas(ruta) == TABLAS | TABLAS_2A | TABLAS_2B
+    assert _tablas(ruta) == TABLAS | TABLAS_2A | TABLAS_2B | TABLAS_2C
     with sqlite3.connect(ruta) as con:
         fila = con.execute(
             "select estado, intentos, reservado_por, reservado_hasta, ultimo_resultado,"
@@ -97,7 +102,7 @@ def test_0002_upgrade_downgrade_upgrade_conserva_datos_de_fase_1(tmp_path):
         assert "reservado_por" not in columnas and "ultimo_resultado" not in columnas
         assert con.execute("select intentos from campana_clientes").fetchone() == (2,)
     command.upgrade(cfg, "head")
-    assert _tablas(ruta) == TABLAS | TABLAS_2A | TABLAS_2B
+    assert _tablas(ruta) == TABLAS | TABLAS_2A | TABLAS_2B | TABLAS_2C
 
 
 def test_sin_diferencias_entre_modelos_y_migracion(tmp_path):

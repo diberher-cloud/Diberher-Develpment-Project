@@ -1,0 +1,88 @@
+{
+  "id": "seguimiento_domingo",
+  "version": 1,
+  "categoria": "seguimiento",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "Mi cédula es 1020304050",
+    "Llámenme el domingo a las 10, o mejor el lunes a las 9"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304050"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Gracias, quedó verificado."
+    },
+    {
+      "herramientas": [
+        {
+          "name": "programar_seguimiento",
+          "input": {
+            "fecha_hora_local": "2026-10-25T10:00",
+            "motivo": "Pide que lo llamen el domingo"
+          }
+        }
+      ]
+    },
+    {
+      "herramientas": [
+        {
+          "name": "programar_seguimiento",
+          "input": {
+            "fecha_hora_local": "2026-10-26T09:00",
+            "motivo": "Pide que lo llamen el lunes"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Listo, le contactaremos el lunes en la mañana."
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    2,
+    3
+  ],
+  "expectativas": {
+    "herramientas_rechazadas": [
+      "FUERA_DE_FRANJA"
+    ],
+    "herramientas_llamadas": [
+      "programar_seguimiento"
+    ],
+    "resultado_tipificacion": "volver_a_llamar"
+  }
+}

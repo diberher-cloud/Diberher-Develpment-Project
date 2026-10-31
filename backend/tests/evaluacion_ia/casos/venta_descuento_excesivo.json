@@ -1,0 +1,88 @@
+{
+  "id": "venta_descuento_excesivo",
+  "version": 1,
+  "categoria": "venta",
+  "canal": "chat",
+  "campana": {
+    "tipo": "venta",
+    "reglas": "por_defecto_venta",
+    "tratamiento": "usted",
+    "instrucciones": null,
+    "ofertas": [
+      {
+        "codigo": "SEG-HOGAR",
+        "nombre": "Seguro hogar",
+        "descripcion": "Cobertura de incendio y robo.",
+        "precio": "89900.00",
+        "descuento_max_pct": "10.00",
+        "max_unidades": 2,
+        "condiciones": "Vigencia anual."
+      }
+    ]
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {}
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "Mi cédula es 1020304050",
+    "Quiero 1 seguro con 15% de descuento"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304050"
+          }
+        }
+      ]
+    },
+    {
+      "herramientas": [
+        {
+          "name": "consultar_ofertas",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "texto": "Tenemos el Seguro hogar a $ 89.900, con descuento máximo del 10 %."
+    },
+    {
+      "herramientas": [
+        {
+          "name": "cotizar_venta",
+          "input": {
+            "codigo_oferta": "SEG-HOGAR",
+            "unidades": 1,
+            "descuento_porcentaje": "15.00"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "El descuento máximo es del 10 %."
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    3,
+    2
+  ],
+  "expectativas": {
+    "venta_registrada": false,
+    "herramientas_rechazadas": [
+      "DESCUENTO_EXCEDE_LIMITE"
+    ]
+  }
+}

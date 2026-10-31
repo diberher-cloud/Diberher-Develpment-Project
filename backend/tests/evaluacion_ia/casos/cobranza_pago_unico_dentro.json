@@ -1,0 +1,116 @@
+{
+  "id": "cobranza_pago_unico_dentro",
+  "version": 1,
+  "categoria": "negociacion_dentro_de_limites",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "Mi cédula es 1020304050",
+    "Puedo pagar 240 mil el 30 de octubre",
+    "Sí, acepto ese pago"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304050"
+          }
+        }
+      ]
+    },
+    {
+      "herramientas": [
+        {
+          "name": "consultar_obligacion",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "texto": "Gracias, María. Su saldo en mora es de $ 300.000. ¿Cómo le gustaría ponerse al día?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "simular_acuerdo_pago",
+          "input": {
+            "monto_total": "240000.00",
+            "numero_cuotas": 1,
+            "fecha_primer_pago": "2026-10-30",
+            "periodicidad": "unica"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Puede pagar $ 240.000 el 30/10/2026 en un solo pago. ¿Lo acepta?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "registrar_acuerdo_pago",
+          "input": {
+            "monto_total": "240000.00",
+            "numero_cuotas": 1,
+            "fecha_primer_pago": "2026-10-30",
+            "periodicidad": "unica",
+            "confirmacion_cliente": "Sí, acepto ese pago"
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Listo, quedó registrado su acuerdo. Recibirá la constancia."
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    3,
+    2,
+    2
+  ],
+  "expectativas": {
+    "acuerdo_registrado": true,
+    "acuerdo": {
+      "monto_total": "240000.00",
+      "numero_cuotas": 1
+    },
+    "herramientas_llamadas": [
+      "verificar_identidad",
+      "consultar_obligacion",
+      "simular_acuerdo_pago",
+      "registrar_acuerdo_pago"
+    ],
+    "identidad_verificada": true,
+    "sin_montos_antes_de_verificar": true,
+    "textos_enviados_contienen_alguno": [
+      "Constancia de su acuerdo de pago"
+    ],
+    "resultado_tipificacion": "promesa_pago"
+  }
+}

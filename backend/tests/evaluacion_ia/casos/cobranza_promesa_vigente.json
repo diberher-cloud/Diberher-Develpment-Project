@@ -1,0 +1,101 @@
+{
+  "id": "cobranza_promesa_vigente",
+  "version": 1,
+  "categoria": "fuera_de_limites",
+  "canal": "chat",
+  "campana": {
+    "tipo": "cobranza",
+    "reglas": "por_defecto_cobranza",
+    "tratamiento": "usted",
+    "instrucciones": null
+  },
+  "cliente": {
+    "nombre": "María Pérez",
+    "tipo_documento": "CC",
+    "numero_documento": "1020304050",
+    "obligacion": {
+      "numero_obligacion": "OB-001",
+      "saldo_total": "1500000.00",
+      "saldo_mora": "300000.00",
+      "dias_mora": 45,
+      "fecha_vencimiento": "2026-09-15"
+    },
+    "promesa_vigente": {
+      "monto": "300000.00",
+      "fecha_pago": "2026-10-28"
+    }
+  },
+  "otro_cliente_mismo_campana": true,
+  "reloj": "2026-10-23T10:00:00-05:00",
+  "turnos_cliente": [
+    "Hola",
+    "Mi cédula es 1020304050",
+    "Quiero pagar 240 mil"
+  ],
+  "guion_llm_falso": [
+    {
+      "texto": "Hola, soy el asistente virtual. ¿Me indica su número de documento?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "verificar_identidad",
+          "input": {
+            "numero_documento": "1020304050"
+          }
+        }
+      ]
+    },
+    {
+      "herramientas": [
+        {
+          "name": "consultar_obligacion",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "texto": "Gracias, María. Su saldo en mora es de $ 300.000. ¿Cómo le gustaría ponerse al día?"
+    },
+    {
+      "herramientas": [
+        {
+          "name": "simular_acuerdo_pago",
+          "input": {
+            "monto_total": "240000.00",
+            "numero_cuotas": 1,
+            "fecha_primer_pago": "2026-10-30",
+            "periodicidad": "unica"
+          }
+        }
+      ]
+    },
+    {
+      "herramientas": [
+        {
+          "name": "derivar_a_humano",
+          "input": {
+            "motivo": "ia_no_resuelve",
+            "resumen": "El cliente ya tiene un acuerdo vigente y quiere negociar otro."
+          }
+        }
+      ]
+    },
+    {
+      "texto": "Un asesor continuará la conversación."
+    }
+  ],
+  "pasos_por_turno": [
+    1,
+    3,
+    3
+  ],
+  "expectativas": {
+    "acuerdo_registrado": false,
+    "herramientas_rechazadas": [
+      "PROMESA_VIGENTE"
+    ],
+    "derivado": true,
+    "motivo_derivacion": "ia_no_resuelve"
+  }
+}

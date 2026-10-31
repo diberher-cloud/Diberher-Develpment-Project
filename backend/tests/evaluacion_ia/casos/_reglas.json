@@ -1,0 +1,47 @@
+{
+  "por_defecto_cobranza": {
+    "base_descuento": "saldo_mora",
+    "descuento_max_pct": "20.00",
+    "descuento_max_pct_por_cuotas": [
+      {
+        "max_cuotas": 1,
+        "descuento_max_pct": "20.00"
+      },
+      {
+        "max_cuotas": 3,
+        "descuento_max_pct": "10.00"
+      },
+      {
+        "max_cuotas": 6,
+        "descuento_max_pct": "0.00"
+      }
+    ],
+    "monto_minimo_promesa": "100000.00",
+    "monto_minimo_cuota": "50000.00",
+    "max_cuotas": 6,
+    "plazo_max_dias_primer_pago": 14,
+    "plazo_max_dias_total": 90,
+    "periodicidades": [
+      "quincenal",
+      "mensual"
+    ]
+  },
+  "por_defecto_venta": {
+    "max_unidades_por_venta": 2,
+    "requiere_aceptacion_terminos": true
+  },
+  "sin_descuento": {
+    "base_descuento": "saldo_mora",
+    "descuento_max_pct": "0.00",
+    "descuento_max_pct_por_cuotas": [],
+    "monto_minimo_promesa": "300000.00",
+    "monto_minimo_cuota": "50000.00",
+    "max_cuotas": 6,
+    "plazo_max_dias_primer_pago": 14,
+    "plazo_max_dias_total": 90,
+    "periodicidades": [
+      "quincenal",
+      "mensual"
+    ]
+  }
+}

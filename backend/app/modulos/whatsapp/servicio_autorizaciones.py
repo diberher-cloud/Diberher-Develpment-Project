@@ -77,7 +77,8 @@ def aplicar_opt_out(
 ) -> None:
     """Servicio único de opt-out (entrante determinista y endpoint manual). Sin commit.
 
-    `origen`: `determinista` (exclusión `origen=sistema`) o `agente` (`origen=usuario`)."""
+    `origen`: `determinista` (exclusión `origen=sistema`), `agente` (`origen=usuario`) o `ia`
+    (`origen=agente_ia`, sin usuario)."""
     from app.modulos.whatsapp import servicio_envio
 
     settings = get_settings()
@@ -91,8 +92,10 @@ def aplicar_opt_out(
                         motivo="solicitud_titular",
                         aplica_a="todas",
                         canal=alcance,
-                        origen="sistema" if origen == "determinista" else "usuario",
-                        creado_por=None if origen == "determinista" else usuario_id,
+                        origen={"determinista": "sistema", "ia": "agente_ia"}.get(
+                            origen, "usuario"
+                        ),
+                        creado_por=usuario_id if origen == "agente" else None,
                         conversacion_id=conv.id,
                         creado_en=ahora,
                     )
@@ -129,7 +132,9 @@ def aplicar_opt_out(
     )
 
 
-def aplicar_opt_out_voz(db: Session, conv: Conversacion, ahora: datetime) -> None:
+def aplicar_opt_out_voz(
+    db: Session, conv: Conversacion, ahora: datetime, origen: str = "sistema"
+) -> None:
     """ "No me llamen": exclusión del canal voz. No cierra la conversación de WhatsApp ni revoca
     las autorizaciones de WhatsApp (el titular sigue pudiendo escribir). Sin commit."""
     numero = conv.numero_cliente_e164
@@ -142,7 +147,7 @@ def aplicar_opt_out_voz(db: Session, conv: Conversacion, ahora: datetime) -> Non
                         motivo="solicitud_titular",
                         aplica_a="todas",
                         canal="voz",
-                        origen="sistema",
+                        origen=origen,
                         creado_por=None,
                         conversacion_id=conv.id,
                         creado_en=ahora,
@@ -158,6 +163,24 @@ def aplicar_opt_out_voz(db: Session, conv: Conversacion, ahora: datetime) -> Non
         "conversacion",
         conv.id,
         {"conversacion_id": conv.id, "alcance": "voz", "origen": "determinista"},
+    )
+
+
+def crear_por_ia(
+    db: Session, conv: Conversacion, finalidad: str, evidencia: str, ahora: datetime
+) -> AutorizacionCanal:
+    """Autorización registrada por la IA (`origen=agente_ia`, sin usuario). 409 si ya existe o
+    la revocó un opt-out posterior. Sin commit."""
+    return _alta(
+        db,
+        numero=conv.numero_cliente_e164,
+        finalidad=finalidad,
+        origen="agente_ia",
+        evidencia=evidencia,
+        otorgada_en=ahora,
+        usuario_id=None,
+        ahora=ahora,
+        conversacion_id=conv.id,
     )
 
 

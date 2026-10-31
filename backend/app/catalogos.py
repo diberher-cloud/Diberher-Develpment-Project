@@ -100,3 +100,38 @@ MOTIVOS_COLA = (
 ESTADOS_TRABAJO = ("pendiente", "en_proceso", "completado", "fallido", "cancelado")
 CANALES_EXCLUSION = ("todos", "voz", "whatsapp")
 ORIGENES_EXCLUSION = ("usuario", "sistema", "agente_ia")
+
+
+# ---- Fase 2C: agente IA -----------------------------------------------------------------------
+ESFUERZOS_IA = ("low", "medium", "high", "xhigh", "max")
+TRATAMIENTOS = ("usted", "tu")
+ROLES_HISTORIAL_IA = ("user", "assistant", "system")
+TIPOS_HISTORIAL_IA = (
+    "entradas_cliente",
+    "resultados_herramientas",
+    "control",
+    "intervencion",
+    "respuesta",
+    "contexto",
+    "instruccion",
+    "correccion",
+    "vuelta_ia",
+)
+EFECTOS_ACCION_IA = (
+    "ninguno",
+    "identidad",
+    "tipificacion",
+    "promesa",
+    "venta",
+    "seguimiento",
+    "exclusion",
+    "autorizacion",
+    "derivacion",
+    "cierre_pendiente",
+)
+PERIODICIDADES = ("unica", "semanal", "quincenal", "mensual")
+MOTIVOS_DESACTIVACION_IA = ("manual", "presupuesto", "errores")
+MODOS_EVALUACION = ("offline", "online")
+ESTADOS_EVALUACION = ("pendiente", "en_curso", "completada", "fallida")
+# Motivos de derivación que puede elegir el modelo (subconjunto de MOTIVOS_COLA de 2B).
+MOTIVOS_DERIVACION_MODELO = ("solicitud_cliente", "queja", "ia_no_resuelve")
