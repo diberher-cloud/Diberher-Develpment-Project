@@ -21,6 +21,8 @@
 
 > **2C detallada a nivel de contrato en [fase-2c.md](fase-2c.md)** (ADR-0022).
 
+> **2D detallada a nivel de contrato en [fase-2d.md](fase-2d.md)** (ADR-0023, ADR-0024).
+
 > **Revisión de alcance: IA en voz (2026-10-28).** El usuario indicó que "las llamadas se atienden por
 > un agente de IA". Hasta esta fecha el diseño ponía la IA solo en el chat de WhatsApp (antigua 2C) y
 > las llamadas (2A y antigua 2E) las atendían humanos. Desde ahora las llamadas de voz —salientes de
