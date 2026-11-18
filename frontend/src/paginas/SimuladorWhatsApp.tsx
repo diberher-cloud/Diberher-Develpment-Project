@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from 'react';
-import { listarMensajes, simularEntranteWhatsApp, simularEstadoMensaje } from '../api/endpoints';
+import { useEffect, useState, type FormEvent } from 'react';
+import { listarConversaciones, listarMensajes, simularEntranteWhatsApp, simularEstadoMensaje } from '../api/endpoints';
 import type { ErrorApi } from '../api/cliente';
-import type { Mensaje, SimulacionEntrante } from '../api/tipos';
+import type { ConversacionResumen, Mensaje, SimulacionEntrante } from '../api/tipos';
 import { Campo } from '../componentes/Campo';
 import { useWhatsApp } from '../componentes/ContextoWhatsApp';
 import { MensajeError } from '../componentes/MensajeError';
@@ -141,15 +141,29 @@ function EstadosSimulados() {
   const [salientes, setSalientes] = useState<Mensaje[] | null>(null);
   const [errorCarga, setErrorCarga] = useState<ErrorApi | null>(null);
   const [cargando, setCargando] = useState(false);
+  const [errLocal, setErrLocal] = useState<string | undefined>();
+  const [lista, setLista] = useState<ConversacionResumen[]>([]);
+
+  // Ayuda para no tener que conocer el ID: conversaciones recientes visibles para el usuario (fallo silencioso).
+  useEffect(() => {
+    let cancelado = false;
+    listarConversaciones({ page_size: 50 }).then(
+      (p) => { if (!cancelado && p && Array.isArray(p.items)) setLista(p.items); },
+      () => {},
+    );
+    return () => { cancelado = true; };
+  }, []);
 
   async function cargar(e: FormEvent) {
     e.preventDefault();
-    const id = Number(conversacion);
-    if (!Number.isInteger(id) || id <= 0) {
-      setErrorCarga(null);
+    const texto = conversacion.trim();
+    const id = Number(texto);
+    if (!/^\d+$/.test(texto) || !Number.isSafeInteger(id) || id <= 0 || id > 2147483647) {
+      setErrLocal('Ingrese el ID interno de la conversación: un número entero positivo (no un teléfono).');
       setSalientes(null);
       return;
     }
+    setErrLocal(undefined);
     setErrorCarga(null);
     setCargando(true);
     try {
@@ -167,10 +181,28 @@ function EstadosSimulados() {
     <section aria-labelledby="t-sim-estado">
       <h2 id="t-sim-estado">Cambiar el estado de los mensajes salientes</h2>
       <p className="ayuda">Solo se pueden cargar conversaciones que usted atiende (o que puede ver como administrador o supervisor).</p>
-      <form onSubmit={cargar} className="filtros">
-        <Campo etiqueta="Número de la conversación">
+      <form onSubmit={cargar} className="filtros" noValidate>
+        <Campo
+          etiqueta="ID de la conversación (n.º interno)"
+          error={errLocal}
+          ayuda="No es un teléfono. Es el identificador interno que aparece en la dirección de la bandeja (/bandeja?conversacion=12) o en la lista de al lado."
+        >
           {(p) => <input {...p} inputMode="numeric" value={conversacion} onChange={(e) => setConversacion(e.target.value)} />}
         </Campo>
+        {lista.length > 0 && (
+          <Campo etiqueta="O elija una conversación">
+            {(p) => (
+              <select {...p} value="" onChange={(e) => { setConversacion(e.target.value); setErrLocal(undefined); }}>
+                <option value="">Seleccione…</option>
+                {lista.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {`#${c.id} · ${c.cliente_nombre ?? c.nombre_perfil ?? c.numero_mascara} · ${c.estado === 'abierta' ? 'abierta' : 'cerrada'}`}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Campo>
+        )}
         <button type="submit" disabled={cargando}>{cargando ? 'Cargando…' : 'Cargar salientes'}</button>
       </form>
       <MensajeError error={errorCarga} />

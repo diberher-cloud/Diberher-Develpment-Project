@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { Autorizacion, Exclusion } from '../api/tipos';
 import { campanaEjemplo, errorApi, iniciarSesionComo, renderizarApp, renderizarAppTiempoReal, respuesta, simularFetch, type Manejador } from './utiles';
-import { configuracion, pagina, plantilla } from './utilesWhatsApp';
+import { configuracion, pagina, plantilla, resumen } from './utilesWhatsApp';
 
 const metodo = (m: string, ruta: string, f: (cuerpo: Record<string, unknown>, url: string) => Response): Manejador => (url, i) =>
   (url.split('?')[0] === `/api/v1${ruta}` && i.method === m ? f(i.body && typeof i.body === 'string' ? JSON.parse(i.body) : {}, url) : undefined);
@@ -255,13 +255,35 @@ describe('Simulador y estado del worker', () => {
       boton_payload: 'BAJA', boton_texto: 'Darme de baja',
     });
 
-    await u.type(screen.getByLabelText('Número de la conversación'), '12');
+    await u.type(screen.getByLabelText('ID de la conversación (n.º interno)'), '12');
     await u.click(screen.getByRole('button', { name: 'Cargar salientes' }));
     expect(await screen.findByText(/Buenos días/)).toBeInTheDocument();
     expect(screen.queryByText(/Mensaje 54/)).not.toBeInTheDocument(); // los entrantes no se listan
     await u.selectOptions(screen.getByLabelText('Nuevo estado del mensaje 55'), 'failed');
     await u.click(screen.getByRole('button', { name: /Aplicar estado/ }));
     await waitFor(() => expect(estados).toEqual([{ estado: 'failed', error_codigo: '63016' }]));
+  });
+
+  it('simulador: el ID de la conversación se valida (un teléfono se rechaza sin llamar a la API) y se puede elegir de una lista', async () => {
+    iniciarSesionComo('supervisor');
+    const m = simularFetch(
+      lista('/whatsapp/configuracion', () => configuracion()),
+      lista('/conversaciones', () => pagina([resumen({ id: 12, cliente_nombre: 'María Pérez' })])),
+      lista('/conversaciones/12/mensajes', () => ({ items: [], hay_mas: false })),
+    );
+    renderizarAppTiempoReal('/whatsapp/simulador');
+    const u = userEvent.setup();
+    const campo = await screen.findByLabelText('ID de la conversación (n.º interno)');
+    expect(screen.getByText(/No es un teléfono/)).toBeInTheDocument();
+    await u.type(campo, '3001234567890');
+    await u.click(screen.getByRole('button', { name: 'Cargar salientes' }));
+    expect(await screen.findByText(/número entero positivo \(no un teléfono\)/)).toBeInTheDocument();
+    expect(m.mock.calls.some(([url]) => String(url).includes('/mensajes'))).toBe(false);
+
+    await u.selectOptions(await screen.findByLabelText('O elija una conversación'), '12');
+    expect(campo).toHaveValue('12');
+    await u.click(screen.getByRole('button', { name: 'Cargar salientes' }));
+    expect(await screen.findByText('La conversación no tiene mensajes salientes.')).toBeInTheDocument();
   });
 
   it('sin simulación no hay enlace en el menú y la página lo explica', async () => {
