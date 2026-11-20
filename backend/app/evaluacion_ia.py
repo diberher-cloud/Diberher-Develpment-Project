@@ -60,7 +60,9 @@ def main(argv: list[str] | None = None) -> int:
         casos, modo, cliente, mostrar, modelo=args.modelo, esfuerzo=args.esfuerzo
     )
     resumen = informe.agregar(resultados, modo)
-    aprobada = informe.aprobada(resultados, modo) and args.casos is None
+    # Con patrón la evaluación nunca cuenta para activar (lo decide la activación por
+    # `patron_casos`); aquí `aprobada` solo dice si los casos ejecutados pasaron.
+    aprobada = informe.aprobada(resultados, modo)
     print(
         f"{resumen['aprobados']}/{resumen['total']} casos aprobados; "
         f"coste {resumen['costo_usd']} USD"

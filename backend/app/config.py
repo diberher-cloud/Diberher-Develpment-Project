@@ -162,6 +162,7 @@ class Settings(BaseSettings):
     ia_exigir_evaluacion_online: bool = False
     ia_umbral_online_negociacion: float = 0.90
     retencion_transcripciones_dias: int = 365
+    ia_evaluacion_timeout_segundos: int = 1800
 
     @model_validator(mode="after")
     def _validar_secreto(self) -> "Settings":
@@ -334,6 +335,7 @@ class Settings(BaseSettings):
             ("IA_ERRORES_UMBRAL", self.ia_errores_umbral, 1, 100),
             ("IA_ERRORES_VENTANA_MINUTOS", self.ia_errores_ventana_minutos, 1, 120),
             ("IA_UMBRAL_ONLINE_NEGOCIACION", self.ia_umbral_online_negociacion, 0, 1),
+            ("IA_EVALUACION_TIMEOUT_SEGUNDOS", self.ia_evaluacion_timeout_segundos, 30, 7200),
         )
         for nombre, valor, minimo, maximo in rangos:
             if not minimo <= valor <= maximo:

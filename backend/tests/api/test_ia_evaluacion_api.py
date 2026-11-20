@@ -15,6 +15,21 @@ from app.modulos.conversaciones.modelos import Conversacion
 API = "/api/v1"
 
 
+def esperar(correr, reloj, db, evaluacion_id, maximo=120):
+    """La evaluación corre en un subproceso: el trabajo se reprograma hasta que termina."""
+    import time
+
+    for _ in range(maximo * 4):
+        correr(reloj())
+        db.expire_all()
+        e = db.get(EvaluacionIA, evaluacion_id)
+        if e.estado in ("completada", "fallida"):
+            return e
+        reloj.avanzar(seconds=5)
+        time.sleep(0.25)
+    raise AssertionError("la evaluación no terminó")
+
+
 def test_e2_evaluacion_offline_por_api(client, h_admin, correr_trabajos, reloj, db):
     r = client.post(f"{API}/ia/evaluaciones", json={"modo": "offline"}, headers=h_admin)
     assert r.status_code == 202 and r.json()["estado"] == "pendiente"
@@ -26,7 +41,7 @@ def test_e2_evaluacion_offline_por_api(client, h_admin, correr_trabajos, reloj, 
     )
     antes = (db.scalar(select(func.count(Conversacion.id))), db.scalar(select(func.count(Cliente.id))),
              db.scalar(select(func.count(Campana.id))))  # fmt: skip
-    correr_trabajos(reloj())
+    esperar(correr_trabajos, reloj, db, r.json()["id"])
     j = client.get(f"{API}/ia/evaluaciones/{r.json()['id']}", headers=h_admin).json()
     assert j["estado"] == "completada" and j["aprobada"] is True
     assert (
@@ -70,8 +85,7 @@ def test_evaluacion_con_patron_registra_y_no_cuenta(client, h_admin, correr_trab
     r = client.post(
         f"{API}/ia/evaluaciones", json={"modo": "offline", "casos": "opt_out_*"}, headers=h_admin
     )
-    correr_trabajos(reloj())
-    e = db.get(EvaluacionIA, r.json()["id"])
+    e = esperar(correr_trabajos, reloj, db, r.json()["id"])
     assert e.patron_casos == "opt_out_*" and e.resumen["total"] == 3 and e.aprobada is True
 
 
@@ -100,3 +114,66 @@ def test_caso_invalido_se_rechaza(tmp_path, campo):
     caso["expectativas"]["inventada"] = True
     with pytest.raises(casos.CasoInvalido):
         casos.validar(caso, {})
+
+
+def test_la_evaluacion_no_sustituye_globales_del_worker(
+    client, h_admin, correr_trabajos, reloj, db
+):
+    """El subproceso aísla bus, proveedor de WhatsApp y cliente de IA del proceso principal."""
+    from app.integraciones.whatsapp import fabrica
+    from app.modulos.agente_ia import llm as llm_mod
+    from app.modulos.agente_ia.llm_falso import ClienteLLMFalso
+    from app.tiempo_real import bus
+
+    cliente = ClienteLLMFalso([])
+    llm_mod.establecer_cliente_llm(cliente)
+    bus_antes, prov_antes = bus.obtener_bus(), fabrica._instancia
+    r = client.post(
+        f"{API}/ia/evaluaciones", json={"modo": "offline", "casos": "humano_*"}, headers=h_admin
+    )
+    esperar(correr_trabajos, reloj, db, r.json()["id"])
+    assert llm_mod._cliente is cliente and bus.obtener_bus() is bus_antes
+    assert fabrica._instancia is prov_antes
+
+
+def test_timeout_mata_el_subproceso_y_marca_fallida(
+    client, h_admin, correr_trabajos, reloj, db, monkeypatch
+):
+    from app.config import get_settings
+    from app.modulos.agente_ia.evaluacion import servicio
+
+    monkeypatch.setattr(get_settings(), "ia_evaluacion_timeout_segundos", 30)
+    lanzados = []
+
+    def colgado(e):
+        import subprocess
+        import sys
+
+        p = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(600)"], start_new_session=True
+        )
+        lanzados.append(p)
+        return p.pid
+
+    monkeypatch.setattr(servicio, "_lanzar", colgado)
+    r = client.post(f"{API}/ia/evaluaciones", json={"modo": "offline"}, headers=h_admin)
+    correr_trabajos(reloj())
+    reloj.avanzar(seconds=60)
+    e = esperar(correr_trabajos, reloj, db, r.json()["id"], maximo=10)
+    assert e.estado == "fallida" and e.resumen == {"error": "TIMEOUT"}
+    lanzados[0].wait(timeout=10)
+    assert lanzados[0].returncode is not None
+
+
+def test_gancho_de_agotamiento_marca_fallida(db, reloj):
+    from datetime import UTC, datetime
+
+    from app.modulos.agente_ia.evaluacion import servicio
+
+    e = EvaluacionIA(modo="offline", canal="chat", prompt_version=1, huella="h", estado="en_curso",
+                     resumen={}, casos=[], creado_en=datetime(2026, 10, 23, tzinfo=UTC))  # fmt: skip
+    db.add(e)
+    db.commit()
+    servicio.evaluacion_agotada(db, {"evaluacion_id": e.id}, "AGOTADO", reloj())
+    db.commit()
+    assert db.get(EvaluacionIA, e.id).estado == "fallida"

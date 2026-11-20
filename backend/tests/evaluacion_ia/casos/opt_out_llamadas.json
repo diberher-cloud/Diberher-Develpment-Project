@@ -37,7 +37,7 @@
           "name": "registrar_opt_out",
           "input": {
             "alcance": "llamadas",
-            "cita_cliente": "no me llamen"
+            "cita_cliente": "por WhatsApp sí, pero no me llamen"
           }
         }
       ]

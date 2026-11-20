@@ -69,6 +69,19 @@ from app.trabajos.modelos import Trabajo  # noqa: E402
 
 
 @pytest.fixture()
+def eventos_ia():
+    from app.tiempo_real import bus
+
+    lista = []
+    actual = bus.obtener_bus()
+    quitar = (
+        actual.suscribir(lista.append) if isinstance(actual, bus.BusMemoria) else (lambda: None)
+    )
+    yield lista
+    quitar()
+
+
+@pytest.fixture()
 def e(client, firmar_twilio, correr_trabajos, reloj, db, esc, crear_usuario):
     from types import SimpleNamespace
 
@@ -454,3 +467,16 @@ def test_t32_campana_pausada(e):
     entrante(e.client, e.firmar, NUMERO, "hola")
     e.correr(e.reloj())
     assert e.conv().atendida_por == "sin_asignar" and llm.llamadas == 0
+
+
+def test_m1_alerta_de_presupuesto_de_conversacion(e, eventos_ia):
+    e.ctx.cfg.max_costo_conversacion_usd = __import__("decimal").Decimal("0.0001")
+    e.db.commit()
+    usar_llm([{"texto": "Hola"}])
+    e.decir("hola")
+    e.decir("otra vez")
+    alertas = [x["datos"] for x in eventos_ia if x["tipo"] == "ia.alerta"]
+    assert any(
+        a["tipo"] == "presupuesto_conversacion" and a["conversacion_id"] == e.conv().id
+        for a in alertas
+    )

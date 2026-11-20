@@ -5,6 +5,7 @@ y cifras no respaldadas por herramientas. Citas: el cliente debe haber escrito l
 """
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -49,20 +50,22 @@ def recortar(texto: str, maximo: int) -> str:
     return texto if len(texto) <= maximo else texto[:maximo] + SUFIJO_TRUNCADO
 
 
+def _pide_humano(e: EntradaCliente, frases_humano: frozenset[str], payload_asesor: str) -> bool:
+    if e.boton_payload is not None and e.boton_payload == payload_asesor:
+        return True
+    if e.tipo in ("texto", "boton") and e.texto:
+        return opt_out.normalizar(e.texto) in frases_humano
+    return False
+
+
 def entrada(
     entradas: list[EntradaCliente],
     frases_humano: frozenset[str],
     payload_asesor: str,
     max_caracteres: int,
 ) -> GuardaEntrada:
-    """GE2 (petición de humano en el último entrante) y GE3 (recorte)."""
-    pide = False
-    if entradas:
-        ultima = entradas[-1]
-        if ultima.boton_payload is not None and ultima.boton_payload == payload_asesor:
-            pide = True
-        elif ultima.tipo in ("texto", "boton") and ultima.texto:
-            pide = opt_out.normalizar(ultima.texto) in frases_humano
+    """GE2 (petición de humano en CUALQUIER entrante del lote del *debounce*) y GE3 (recorte)."""
+    pide = any(_pide_humano(e, frases_humano, payload_asesor) for e in entradas)
     saneadas = [
         replace(e, texto=recortar(e.texto, max_caracteres)) if e.texto is not None else e
         for e in entradas
@@ -71,48 +74,190 @@ def entrada(
 
 
 # ---- Montos y porcentajes ----------------------------------------------------------------------
-_NUM = r"(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?"
-_M1 = re.compile(rf"(?:\$|cop)\s?{_NUM}")
-_M2 = re.compile(rf"{_NUM}\s?(?:pesos|cop)\b")
-_M3 = re.compile(r"(\d+(?:[.,]\d+)?)\s?(?:millones|millón|millon)\b")
-_M4 = re.compile(r"(\d+)\s?mil\b")
-_M5 = re.compile(r"\b(\d{1,3}(?:\.\d{3})+)(?:,(\d{1,2}))?\b")
-_P1 = re.compile(r"(\d{1,3}(?:[.,]\d{1,2})?)\s?(?:%|por ciento)")
+# El texto se normaliza (NFKC: cifras de ancho completo y espacios duros; sin tildes; espacios
+# colapsados) y las cifras se buscan escritas con dígitos (`$ 250.000`, `250k`, `1.5M`, `250 mil`,
+# `250000`, `35 porciento`) y en letras (`doscientos cincuenta mil`, `treinta por ciento`, `medio
+# millón`). Lo que no se puede interpretar con certeza junto a `por ciento` se trata como cifra
+# NO respaldada (bloquear es el lado seguro).
+_MIL = r"(?:\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d{1,3}(?: \d{3})+|\d+(?:[.,]\d{1,2})?)"
+_MULT_M = re.compile(r"(\d+(?:[.,]\d+)?)(?: ?(?:millones|millon)\b|m\b)")
+_MULT_K = re.compile(r"(\d+(?:[.,]\d+)?)(?: ?mil\b|k\b| k\b)")
+_PCT_NUM = re.compile(r"(\d+(?:[.,]\d+)?) ?(?:%|por ciento)")
+_SIMBOLO = re.compile(rf"(?:\$|\bcop\b) ?({_MIL})")
+_PESOS = re.compile(rf"({_MIL}) ?(?:pesos|cop)\b")
+_PUNTOS = re.compile(r"(?<![\d.,])(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)(?![\d.,])")
+_SIN_FORMATO = re.compile(r"(?<![\d/.,\-:])(\d{4,})(?![\d/.,\-:])")
+_PCT_PALABRAS = re.compile(r"\bpor-?ciento\b|\bpor[ -]ciento\b")
+
+UNIDADES = {
+    "cero": 0, "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11, "doce": 12,
+    "trece": 13, "catorce": 14, "quince": 15, "dieciseis": 16, "diecisiete": 17,
+    "dieciocho": 18, "diecinueve": 19, "veinte": 20, "veintiun": 21, "veintiuno": 21,
+    "veintiuna": 21, "veintidos": 22, "veintitres": 23, "veinticuatro": 24, "veinticinco": 25,
+    "veintiseis": 26, "veintisiete": 27, "veintiocho": 28, "veintinueve": 29,
+}  # fmt: skip
+DECENAS = {
+    "treinta": 30, "cuarenta": 40, "cincuenta": 50, "sesenta": 60, "setenta": 70,
+    "ochenta": 80, "noventa": 90,
+}  # fmt: skip
+CENTENAS = {
+    "cien": 100, "ciento": 100, "doscientos": 200, "doscientas": 200, "trescientos": 300,
+    "trescientas": 300, "cuatrocientos": 400, "cuatrocientas": 400, "quinientos": 500,
+    "quinientas": 500, "seiscientos": 600, "seiscientas": 600, "setecientos": 700,
+    "setecientas": 700, "ochocientos": 800, "ochocientas": 800, "novecientos": 900,
+    "novecientas": 900,
+}  # fmt: skip
+GRANDES = {"mil": 1000, "millon": 1_000_000, "millones": 1_000_000}
+PALABRAS_NUMERO = (
+    set(UNIDADES) | set(DECENAS) | set(CENTENAS) | set(GRANDES) | {"medio", "media", "y"}
+)
 
 
-def _entero(texto: str, decimales: str | None) -> Decimal:
-    valor = Decimal(texto.replace(".", ""))
-    if decimales:
-        valor += Decimal(decimales) / Decimal(10 ** len(decimales))
-    return valor
+def normalizar_texto(texto: str) -> str:
+    """NFKC + minúsculas + sin tildes + espacios colapsados (incluye espacios duros)."""
+    t = unicodedata.normalize("NFKC", texto).lower()
+    t = "".join(c for c in unicodedata.normalize("NFD", t) if not unicodedata.combining(c))
+    t = _PCT_PALABRAS.sub("por ciento", t)
+    return re.sub(r"\s+", " ", t)
 
 
-def _consumir(texto: str, patron: re.Pattern[str]) -> tuple[list[re.Match[str]], str]:
-    """Coincidencias de `patron` y el texto con sus tramos tapados (no se cuentan dos veces)."""
+def _numero(token: str) -> Decimal:
+    """`250.000`, `250,000`, `250 000`, `1.5`, `1,5`, `1.234.567,50`, `250000`."""
+    t = token.strip()
+    if re.fullmatch(r"\d{1,3}(?:[., ]\d{3})+", t):
+        return Decimal(re.sub(r"[., ]", "", t))
+    m = re.fullmatch(r"(\d{1,3}(?:[.,]\d{3})+)[.,](\d{1,2})", t)
+    if m:
+        return Decimal(re.sub(r"[.,]", "", m.group(1)) + "." + m.group(2))
+    return Decimal(t.replace(",", ".").replace(" ", ""))
+
+
+def _valor_de_palabras(palabras: list[str]) -> Decimal | None:
+    """Valor de una secuencia de numerales en español; None si no es interpretable con certeza."""
+    total, actual = 0, 0
+    previa = ""
+    for i, w in enumerate(palabras):
+        if w == "y":
+            ant = palabras[i - 1] if i else ""
+            sig = palabras[i + 1] if i + 1 < len(palabras) else ""
+            if not (ant in DECENAS and sig in UNIDADES and 1 <= UNIDADES[sig] <= 9):
+                return None
+        elif w in UNIDADES:
+            if previa in UNIDADES:
+                return None
+            actual += UNIDADES[w]
+        elif w in DECENAS:
+            actual += DECENAS[w]
+        elif w in CENTENAS:
+            if actual % 1000 >= 100:
+                return None
+            actual += CENTENAS[w]
+        elif w in ("medio", "media"):
+            if i + 1 >= len(palabras) or palabras[i + 1] not in ("millon", "millones"):
+                return None
+            actual = 0
+            total += 500_000
+            palabras[i + 1] = "_"  # el "millón" ya está contado
+        elif w == "_":
+            pass
+        elif w == "mil":
+            total += (actual or 1) * 1000
+            actual = 0
+        elif w in ("millon", "millones"):
+            total += (actual or 1) * 1_000_000
+            actual = 0
+        else:
+            return None
+        previa = w
+    return Decimal(total + actual)
+
+
+@dataclass
+class Cifras:
+    montos: list[Decimal]
+    porcentajes: list[Decimal]
+    inciertas: bool  # una expresión numérica en letras no se pudo interpretar con certeza
+
+
+def _tapar(texto: str, patron: re.Pattern[str]) -> tuple[list[re.Match[str]], str]:
     encontradas = list(patron.finditer(texto))
     for m in reversed(encontradas):
         texto = texto[: m.start()] + " " * (m.end() - m.start()) + texto[m.end() :]
     return encontradas, texto
 
 
+def _palabras_numericas(texto: str, cifras: Cifras) -> None:
+    """Interpreta numerales en letras junto a mil/millón/pesos/por ciento."""
+    toks = [(m.group(0), m.start()) for m in re.finditer(r"[a-z_]+|\S", texto)]
+    i = 0
+    while i < len(toks):
+        if toks[i][0] not in PALABRAS_NUMERO or toks[i][0] == "y":
+            i += 1
+            continue
+        j = i
+        while j < len(toks) and toks[j][0] in PALABRAS_NUMERO:
+            j += 1
+        corrida = [t for t, _ in toks[i:j]]
+        while corrida and corrida[-1] == "y":  # "y" final no pertenece al numeral
+            corrida.pop()
+            j -= 1
+        siguiente = toks[j][0] if j < len(toks) else ""
+        siguiente2 = toks[j + 1][0] if j + 1 < len(toks) else ""
+        i_previo = toks[i - 1][0] if i else ""
+        es_pct = siguiente == "por" and siguiente2 == "ciento"
+        grande = any(w in GRANDES for w in corrida)
+        otras = [w for w in corrida if w not in GRANDES and w != "y"]
+        pesos = siguiente in ("pesos", "cop") or (siguiente == "de" and siguiente2 == "pesos")
+        simbolo = i_previo == "$"
+        relevante = es_pct or pesos or simbolo or (grande and (otras or corrida != ["mil"]))
+        if relevante:
+            valor = _valor_de_palabras(list(corrida))
+            if valor is None:
+                cifras.inciertas = True
+            elif es_pct:
+                cifras.porcentajes.append(valor)
+            else:
+                cifras.montos.append(valor)
+        i = max(j, i + 1)
+    # `por ciento` sin un número (dígitos o letras) delante: no interpretable -> incierto
+    for m in re.finditer(r"por ciento", texto):
+        antes = texto[: m.start()].split()
+        if not antes or not (antes[-1] in PALABRAS_NUMERO or re.search(r"\d", antes[-1])):
+            cifras.inciertas = True
+
+
+def analizar_cifras(texto: str) -> Cifras:
+    t = normalizar_texto(texto)
+    cifras = Cifras([], [], False)
+    ms, t = _tapar(t, _PCT_NUM)
+    cifras.porcentajes += [_numero(m.group(1)) for m in ms]
+    for patron, factor in ((_MULT_M, 1_000_000), (_MULT_K, 1000)):
+        ms, t = _tapar(t, patron)
+        for m in ms:
+            cifras.montos.append(_numero(m.group(1)) * factor)
+            # Las abreviaturas `k` y `M` (`250k`, `1.5M`) nunca se aceptan: el modelo debe
+            # escribir el monto como lo devolvió la herramienta (`$ 250.000`, `1,5 millones`).
+            if re.search(r"\d(?:k|m)\b| k\b", m.group(0)):
+                cifras.inciertas = True
+    for patron in (_SIMBOLO, _PESOS, _PUNTOS):
+        ms, t = _tapar(t, patron)
+        cifras.montos += [_numero(m.group(1)) for m in ms]
+    for m in _SIN_FORMATO.finditer(t):
+        valor = int(m.group(1))
+        if not (len(m.group(1)) == 4 and 1900 <= valor <= 2100):  # los años no son montos
+            cifras.montos.append(Decimal(valor))
+    _palabras_numericas(t, cifras)
+    return cifras
+
+
 def extraer_montos(texto: str) -> list[Decimal]:
-    """Montos en pesos mencionados (`$ 1.500.000`, `300 mil pesos`, `1,5 millones`...). No
-    detecta cifras en palabras ni números sin símbolo ni separador de miles."""
-    t = texto.lower()
-    montos: list[Decimal] = []
-    # Primero las formas con multiplicador, para que `$ 300 mil` no se lea como `$ 300`.
-    ms, t = _consumir(t, _M3)
-    montos += [Decimal(m.group(1).replace(",", ".")) * 1_000_000 for m in ms]
-    ms, t = _consumir(t, _M4)
-    montos += [Decimal(m.group(1)) * 1000 for m in ms]
-    for patron in (_M1, _M2, _M5):
-        ms, t = _consumir(t, patron)
-        montos += [_entero(m.group(1), m.group(2)) for m in ms]
-    return montos
+    """Montos en pesos mencionados (dígitos o letras)."""
+    return analizar_cifras(texto).montos
 
 
 def extraer_porcentajes(texto: str) -> list[Decimal]:
-    return [Decimal(m.group(1).replace(",", ".")) for m in _P1.finditer(texto.lower())]
+    return analizar_cifras(texto).porcentajes
 
 
 # ---- Valores respaldados -----------------------------------------------------------------------
@@ -238,11 +383,17 @@ def salida(texto: str, ctx: ContextoGuardas) -> FalloGuarda | None:
         return FalloGuarda("URL_NO_PERMITIDA", "incluye un enlace no permitido")
     if len(texto) > ctx.max_caracteres:
         return FalloGuarda("LONGITUD_EXCEDIDA", f"supera {ctx.max_caracteres} caracteres")
-    montos = extraer_montos(texto)
-    porcentajes = extraer_porcentajes(texto)
-    if not ctx.identidad_verificada and (montos or porcentajes):
+    cifras = analizar_cifras(texto)
+    montos, porcentajes = cifras.montos, cifras.porcentajes
+    if not ctx.identidad_verificada and (montos or porcentajes or cifras.inciertas):
         return FalloGuarda(
             "MONTO_ANTES_DE_VERIFICAR", "menciona cifras antes de verificar la identidad"
+        )
+    if cifras.inciertas:
+        return FalloGuarda(
+            "MONTO_NO_RESPALDADO",
+            "menciona una cifra que no se pudo comprobar: escribe las cifras con números, "
+            "exactamente como las devolvió una herramienta",
         )
     for m in montos:
         if not any(abs(m - r) < 1 for r in ctx.montos_respaldados):
@@ -265,23 +416,109 @@ def formatear_cifra(monto: Decimal) -> str:
 
 
 # ---- Citas -------------------------------------------------------------------------------------
-CodigoCita = Literal["CITA_INVALIDA", "CITA_ANTERIOR_A_PROPUESTA", "CITA_NO_ENCONTRADA"]
+CodigoCita = Literal[
+    "CITA_INVALIDA",
+    "CITA_ANTERIOR_A_PROPUESTA",
+    "CITA_NO_ENCONTRADA",
+    "CITA_NEGADA",
+    "CITA_NO_VALIDA",
+]
 MAX_CITA = 300
+FRACCION_MINIMA_CITA = 0.6
+NEGACIONES = frozenset(
+    {"no", "nunca", "tampoco", "ni", "jamas", "nada", "nadie", "ninguno", "ninguna"}
+)
+# Palabras sin contenido propio: no cuentan para la fracción del mensaje que cubre la cita.
+NO_SIGNIFICATIVAS = frozenset(
+    {
+        "de", "la", "el", "los", "las", "un", "una", "y", "a", "en", "que", "lo", "me", "mi", "se",
+        "es", "al", "del", "por", "para", "con", "gracias", "favor", "porfa", "hola", "buenas",
+        "buenos", "dias", "tardes", "noches", "senor", "senora", "doctor", "doctora",
+    }
+)  # fmt: skip
+
+
+def _palabras(texto: str) -> list[str]:
+    return opt_out.normalizar_sin_cortesia(texto).split()
+
+
+def _contiene(mensaje: list[str], cita: list[str]) -> bool:
+    n = len(cita)
+    return n > 0 and any(mensaje[i : i + n] == cita for i in range(len(mensaje) - n + 1))
+
+
+def tiene_negacion(texto: str) -> bool:
+    """¿El mensaje contiene una negación? Ante la duda se rechaza (`no acepto`, `nunca`, `para
+    nada`, `ni`...): el modelo debe pedir una confirmación explícita."""
+    palabras = _palabras(texto)
+    return any(p in NEGACIONES for p in palabras) or _contiene(palabras, ["para", "nada"])
+
+
+def _cubre(cita: list[str], mensaje: list[str], fraccion: float) -> bool:
+    if cita == mensaje:
+        return True
+    signif = [p for p in mensaje if p not in NO_SIGNIFICATIVAS]
+    if not signif:
+        return False
+    cubiertas = [p for p in signif if p in cita]
+    return len(cubiertas) / len(signif) >= fraccion
+
+
+def localizar_cita(
+    cita: str,
+    textos_cliente: list[TextoCliente],
+    desde: datetime | None,
+    *,
+    afirmacion: bool = True,
+    completo: bool = False,
+    fraccion_minima: float = FRACCION_MINIMA_CITA,
+) -> TextoCliente | CodigoCita:
+    """Mensaje del cliente que respalda la cita, o el código del rechazo.
+
+    - La cita (normalizada, 2..300 caracteres) debe estar en UN mensaje posterior a `desde`.
+    - Debe ser el mensaje completo (`completo`) o cubrir al menos `fraccion_minima` de sus
+      palabras significativas: una palabra suelta de un mensaje largo no vale.
+    - Si es una confirmación (`afirmacion`), el mensaje no puede contener una negación
+      (`no acepto`, `nunca`...). Para opt-out la negación es el contenido y no se comprueba."""
+    c = _palabras(cita)
+    texto_c = " ".join(c)
+    if not 2 <= len(texto_c) <= MAX_CITA:
+        return "CITA_INVALIDA"
+    en_anterior = False
+    negada = False
+    parcial = False
+    for t in textos_cliente:
+        m = _palabras(t.texto)
+        if not _contiene(m, c):
+            continue
+        if desde is not None and t.momento <= desde:
+            en_anterior = True
+            continue
+        if afirmacion and tiene_negacion(t.texto):
+            negada = True
+            continue
+        if completo:
+            if c == m:
+                return t
+            parcial = True
+            continue
+        if _cubre(c, m, fraccion_minima):
+            return t
+        parcial = True
+    if negada:
+        return "CITA_NEGADA"
+    if parcial:
+        return "CITA_NO_VALIDA"
+    return "CITA_ANTERIOR_A_PROPUESTA" if en_anterior else "CITA_NO_ENCONTRADA"
 
 
 def verificar_cita(
-    cita: str, textos_cliente: list[TextoCliente], desde: datetime | None
+    cita: str,
+    textos_cliente: list[TextoCliente],
+    desde: datetime | None,
+    *,
+    afirmacion: bool = True,
+    completo: bool = False,
 ) -> CodigoCita | None:
-    """Válida si la cita normalizada (2..300 caracteres) está en el texto normalizado de UN
-    mensaje del cliente posterior a `desde` (coincidencia por palabras completas)."""
-    c = opt_out.normalizar_sin_cortesia(cita)
-    if not 2 <= len(c) <= MAX_CITA:
-        return "CITA_INVALIDA"
-    aguja = f" {c} "
-    en_anterior = False
-    for t in textos_cliente:
-        if aguja in f" {opt_out.normalizar_sin_cortesia(t.texto)} ":
-            if desde is None or t.momento > desde:
-                return None
-            en_anterior = True
-    return "CITA_ANTERIOR_A_PROPUESTA" if en_anterior else "CITA_NO_ENCONTRADA"
+    r = localizar_cita(cita, textos_cliente, desde, afirmacion=afirmacion, completo=completo)
+    return r if isinstance(r, str) else None

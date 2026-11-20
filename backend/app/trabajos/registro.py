@@ -69,3 +69,4 @@ def cargar_manejadores() -> None:
     MANEJADORES["ia.traspasar_campana"] = trabajos_ia.traspasar_campana
     MANEJADORES["ia.evaluacion"] = trabajos_ia.evaluacion
     AL_AGOTAR["ia.turno"] = trabajos_ia.turno_agotado
+    AL_AGOTAR["ia.evaluacion"] = trabajos_ia.evaluacion_agotada

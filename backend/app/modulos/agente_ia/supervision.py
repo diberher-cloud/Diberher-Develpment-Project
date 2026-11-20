@@ -163,7 +163,8 @@ def gestion_de(db: Session, conversacion_id: int) -> GestionIA | None:
 
 # ---- Acciones, uso, historial ------------------------------------------------------------------
 def acciones(db: Session, usuario: Usuario, conv: Conversacion) -> list[AccionSalida]:
-    servicio.exigir_acceso(conv, usuario)
+    if usuario.rol == "agente" and not servicio.es_dueno(conv, usuario):
+        raise ErrorApp(404, "NO_ENCONTRADO", "Conversación no encontrada.")
     ve_todo = usuario.rol in ("administrador", "supervisor")
     salida = []
     for a in db.scalars(

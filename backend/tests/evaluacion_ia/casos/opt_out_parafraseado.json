@@ -37,7 +37,7 @@
           "name": "registrar_opt_out",
           "input": {
             "alcance": "whatsapp",
-            "cita_cliente": "ya no me escriban por aquí"
+            "cita_cliente": "ya no me escriban por aquí, por favor se lo pido"
           }
         }
       ]

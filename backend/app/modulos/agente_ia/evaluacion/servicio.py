@@ -1,7 +1,14 @@
 """Evaluaciones registradas en `evaluaciones_ia` y trabajo `ia.evaluacion` (fase-2c.md §6.9)."""
 
-from datetime import datetime
-from typing import Any
+import contextlib
+import json
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,8 +18,7 @@ from app.errores import ErrorApp, detalle
 from app.modulos.agente_ia import configuracion, eventos
 from app.modulos.agente_ia.esquemas import EvaluacionCrear
 from app.modulos.agente_ia.esquemas import EvaluacionIA as EvaluacionSalida
-from app.modulos.agente_ia.evaluacion import casos as casos_mod
-from app.modulos.agente_ia.evaluacion import harness, informe
+from app.modulos.agente_ia.evaluacion import informe
 from app.modulos.agente_ia.modelos import ConfiguracionIACampana, EvaluacionIA
 from app.modulos.agente_ia.prompts import VERSIONES
 from app.modulos.auditoria import servicio as auditoria
@@ -21,6 +27,9 @@ from app.modulos.conversaciones.esquemas import UsuarioRef
 from app.modulos.usuarios.modelos import Usuario
 from app.paginacion import Pagina, ParamsPaginacion, paginar
 from app.trabajos.cola import encolar
+from app.trabajos.registro import ReprogramarTrabajo
+
+SONDEO_SEGUNDOS = 3
 
 
 def salida(db: Session, e: EvaluacionIA) -> EvaluacionSalida:
@@ -37,7 +46,7 @@ def salida(db: Session, e: EvaluacionIA) -> EvaluacionSalida:
         patron_casos=e.patron_casos,
         estado=e.estado,
         aprobada=e.aprobada,
-        resumen=e.resumen,
+        resumen={k: v for k, v in (e.resumen or {}).items() if not k.startswith("_")},
         casos=e.casos,
         iniciada_por=UsuarioRef(id=u.id, nombre=u.nombre) if u else None,
         creado_en=e.creado_en,
@@ -149,40 +158,106 @@ def registrar_resultado(
     e.completada_en = ahora
 
 
-def ejecutar_evaluacion(db: Session, evaluacion_id: int, ahora: datetime) -> None:
-    """Trabajo `ia.evaluacion`: mismo arnés que la CLI y los tests."""
-    e = db.get(EvaluacionIA, evaluacion_id)
-    if e is None or e.estado != "pendiente":
-        return
-    e.estado = "en_curso"
-    db.commit()
-    resultados: list[informe.ResultadoCaso] = []
-    try:
-        cliente: Any = None
-        if e.modo == "online":
-            from app.modulos.agente_ia.llm_anthropic import ClienteAnthropic
+def _ruta_informe(evaluacion_id: int) -> Path:
+    return Path(tempfile.gettempdir()) / f"evaluacion_ia_{evaluacion_id}.json"
 
-            s = get_settings()
-            cliente = ClienteAnthropic(
-                api_key=s.anthropic_api_key.get_secret_value(),
-                timeout_segundos=s.ia_timeout_segundos,
-            )
-        resultados = harness.ejecutar_casos(
-            casos_mod.cargar_casos(e.patron_casos),
-            e.modo,
-            cliente,
-            modelo=e.modelo,
-            esfuerzo=e.esfuerzo,
-        )
-        registrar_resultado(db, e, resultados, ahora)
-    except Exception as exc:  # la evaluación no debe tumbar el worker
-        db.rollback()
-        e = db.get(EvaluacionIA, evaluacion_id)
-        assert e is not None
-        e.estado = "fallida"
-        e.resumen = {"error": type(exc).__name__}
-        e.completada_en = ahora
+
+def _lanzar(e: EvaluacionIA) -> int:
+    """Lanza `python -m app.evaluacion_ia` en un PROCESO APARTE: la evaluación usa su propia BD
+    SQLite en memoria y sustituye globales (bus, proveedor de WhatsApp, cliente de IA) que no
+    deben tocar los del worker. Devuelve el pid."""
+    salida = _ruta_informe(e.id)
+    salida.unlink(missing_ok=True)
+    orden = [sys.executable, "-m", "app.evaluacion_ia", "--salida", str(salida)]
+    if e.modo == "online":
+        orden.append("--real")
+    if e.patron_casos:
+        orden += ["--casos", e.patron_casos]
+    if e.modelo:
+        orden += ["--modelo", e.modelo]
+    if e.esfuerzo:
+        orden += ["--esfuerzo", e.esfuerzo]
+    proceso = subprocess.Popen(  # noqa: S603  (argumentos fijos; el patrón viaja como un argumento)
+        orden,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=dict(os.environ),
+        start_new_session=True,
+    )
+    return proceso.pid
+
+
+def _vivo(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        # un proceso terminado y no recogido (zombi) sigue "existiendo": se recoge si es hijo
+        try:
+            terminado, _ = os.waitpid(pid, os.WNOHANG)
+            return terminado == 0
+        except ChildProcessError:
+            return True
+    except OSError:
+        return False
+
+
+def _fallar(e: EvaluacionIA, motivo: str, ahora: datetime) -> None:
+    e.estado = "fallida"
+    e.resumen = {"error": motivo}
+    e.completada_en = ahora
+
+
+def ejecutar_evaluacion(db: Session, evaluacion_id: int, ahora: datetime) -> None:
+    """Trabajo `ia.evaluacion`, sin bloquear la cola: la primera vez lanza el subproceso y
+    reprograma el trabajo; cada vuelta comprueba si terminó (o venció el
+    `IA_EVALUACION_TIMEOUT_SEGUNDOS`: se mata). No se repite por bloqueo caducado
+    (`max_intentos=1`; un gancho `AL_AGOTAR` la marca fallida)."""
+    e = db.get(EvaluacionIA, evaluacion_id)
+    if e is None or e.estado in ("completada", "fallida"):
+        return
+    timeout = get_settings().ia_evaluacion_timeout_segundos
+    informe_ruta = _ruta_informe(e.id)
+    if e.estado == "pendiente":
+        e.estado = "en_curso"
+        e.resumen = {"_proceso": {"pid": _lanzar(e), "desde": ahora.isoformat()}}
+        db.commit()
+        raise ReprogramarTrabajo(ahora + timedelta(seconds=SONDEO_SEGUNDOS))
+    proceso = (e.resumen or {}).get("_proceso") or {}
+    pid = int(proceso.get("pid", 0))
+    if informe_ruta.exists() and not _vivo(pid):
+        try:
+            datos = json.loads(informe_ruta.read_text(encoding="utf-8"))
+            e.resumen = datos["resumen"]
+            e.casos = datos["casos"]
+            e.aprobada = bool(datos["aprobada"])
+            e.estado = "completada"
+            e.completada_en = ahora
+        except (ValueError, KeyError):
+            _fallar(e, "INFORME_INVALIDO", ahora)
+        informe_ruta.unlink(missing_ok=True)
+    elif not _vivo(pid):
+        _fallar(e, "PROCESO_TERMINADO_SIN_INFORME", ahora)
+    else:
+        desde = datetime.fromisoformat(proceso["desde"])
+        if (ahora - desde).total_seconds() > timeout:
+            with contextlib.suppress(OSError):
+                os.killpg(pid, signal.SIGKILL)
+            _fallar(e, "TIMEOUT", ahora)
+        else:
+            db.commit()
+            raise ReprogramarTrabajo(ahora + timedelta(seconds=SONDEO_SEGUNDOS))
     eventos.publicar_evaluacion(db, e.id, e.estado, e.aprobada)
     if e.estado == "fallida" or e.aprobada is False:
         eventos.publicar_alerta(db, "evaluacion_fallida", "aviso", e.campana_id)
     db.commit()
+
+
+def evaluacion_agotada(db: Session, payload: dict, codigo: str, ahora: datetime) -> None:
+    """Gancho: el trabajo se agotó (worker caído, bloqueo caducado): `fallida`, sin reintento."""
+    e = db.get(EvaluacionIA, int(payload.get("evaluacion_id", 0)))
+    if e is not None and e.estado in ("pendiente", "en_curso"):
+        pid = int(((e.resumen or {}).get("_proceso") or {}).get("pid", 0))
+        if pid:
+            with contextlib.suppress(OSError):
+                os.killpg(pid, signal.SIGKILL)
+        _fallar(e, codigo, ahora)
+        eventos.publicar_evaluacion(db, e.id, e.estado, e.aprobada)

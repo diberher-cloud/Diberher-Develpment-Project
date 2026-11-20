@@ -36,7 +36,7 @@
         {
           "name": "registrar_autorizacion_whatsapp",
           "input": {
-            "cita_cliente": "acepto que me escriban por aquí"
+            "cita_cliente": "Sí, acepto que me escriban por aquí"
           }
         }
       ]

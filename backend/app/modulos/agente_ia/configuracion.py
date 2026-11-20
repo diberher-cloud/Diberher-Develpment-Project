@@ -103,6 +103,12 @@ def evaluacion_vigente(
     return db.scalar(consulta.order_by(EvaluacionIA.id.desc()).limit(1))
 
 
+def texto_retracto(reglas: Any) -> str:
+    """Texto de retracto de la campaña, o el global `IA_TEXTO_RETRACTO`."""
+    propio = reglas.get("texto_retracto") if isinstance(reglas, dict) else None
+    return (propio or get_settings().ia_texto_retracto or "").strip()
+
+
 def reglas_validas(tipo: str, reglas: Any) -> bool:
     try:
         if tipo == "cobranza":
@@ -151,6 +157,11 @@ def faltantes_activacion(
         )
         if not n:
             falta("SIN_OFERTAS_ACTIVAS", "La campaña de venta no tiene ofertas activas.")
+    if campana.tipo == "venta" and not texto_retracto(valores["reglas"]):
+        falta(
+            "RETRACTO_SIN_TEXTO",
+            "Las ventas exigen el texto de retracto (de la campaña o IA_TEXTO_RETRACTO).",
+        )
     if valores["presupuesto_usd_mensual"] <= 0:
         falta("PRESUPUESTO_CERO", "El presupuesto mensual debe ser mayor que cero.")
     if not db.scalar(
@@ -334,7 +345,9 @@ def actualizar(
         if campana.tipo == "cobranza":
             reglas_json = validar_reglas_cobranza(datos.reglas).model_dump(mode="json")
         else:
-            reglas_json = validar_reglas_venta(datos.reglas).model_dump(mode="json")
+            reglas_json = validar_reglas_venta(datos.reglas).model_dump(
+                mode="json", exclude_none=True
+            )
     except ErroresReglas as e:
         errores += [(f"reglas.{c}" if c else "reglas", m) for c, m in e.detalles]
     if errores:

@@ -266,3 +266,44 @@ def test_ofertas_venta_reglas_y_config_venta(client, h_admin, esc):
         headers=h_admin,
     )
     assert r.status_code == 422
+
+
+def test_m2_venta_exige_texto_de_retracto(client, h_admin, esc, crear_usuario, db, monkeypatch):
+    from app.config import get_settings
+    from app.modulos.agente_ia.modelos import OfertaCampana
+
+    venta = esc.campana(tipo="venta", whatsapp_habilitado=True)
+    db.add(CampanaAgente(campana_id=venta.id, usuario_id=crear_usuario("agente").id))
+    db.add(OfertaCampana(campana_id=venta.id, codigo="X1", nombre="Seguro", precio=Decimal(10),
+                         creado_en=datetime(2026, 10, 1, tzinfo=UTC), actualizado_en=datetime(2026, 10, 1, tzinfo=UTC)))  # fmt: skip
+    evaluacion_offline(db)
+    db.commit()
+    client.put(f"{API}/campanas/{venta.id}/ia", json=cuerpo(reglas=REGLAS_VENTA), headers=h_admin)
+    r = client.post(f"{API}/campanas/{venta.id}/ia/activar", json={}, headers=h_admin)
+    assert r.status_code == 409 and "RETRACTO_SIN_TEXTO" in str(r.json())
+    # texto propio de la campaña
+    con = dict(REGLAS_VENTA, texto_retracto="Tiene 5 días hábiles para retractarse.")
+    client.put(
+        f"{API}/campanas/{venta.id}/ia",
+        json=cuerpo(version_esperada=1, reglas=con),
+        headers=h_admin,
+    )
+    assert (
+        client.post(f"{API}/campanas/{venta.id}/ia/activar", json={}, headers=h_admin).status_code
+        == 200
+    )
+    assert client.get(f"{API}/campanas/{venta.id}/ia", headers=h_admin).json()["reglas"][
+        "texto_retracto"
+    ]
+    # o el texto global
+    client.post(f"{API}/campanas/{venta.id}/ia/desactivar", json={}, headers=h_admin)
+    client.put(
+        f"{API}/campanas/{venta.id}/ia",
+        json=cuerpo(version_esperada=2, reglas=REGLAS_VENTA),
+        headers=h_admin,
+    )
+    monkeypatch.setattr(get_settings(), "ia_texto_retracto", "Retracto de ley.")
+    assert (
+        client.post(f"{API}/campanas/{venta.id}/ia/activar", json={}, headers=h_admin).status_code
+        == 200
+    )

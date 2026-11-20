@@ -140,15 +140,21 @@ def _mensajes_para_intervencion(
     return salida
 
 
+def _exigir_dueno_o_404(conv: Conversacion, usuario: Usuario) -> None:
+    """Un agente recibe el mismo 404 para una conversación inexistente que para una ajena."""
+    if not conversaciones.es_dueno(conv, usuario):
+        raise ErrorApp(404, "NO_ENCONTRADO", "Conversación no encontrada.")
+
+
 def devolver_a_ia(
     db: Session, usuario: Usuario, conversacion_id: int, ahora: datetime
 ) -> Conversacion:
     previa = conversaciones.cargar(db, conversacion_id)
     if usuario.rol == "agente":
-        conversaciones.exigir_dueno(previa, usuario)
+        _exigir_dueno_o_404(previa, usuario)
     conv = conversaciones.bloquear(db, conversacion_id)
     if usuario.rol == "agente":
-        conversaciones.exigir_dueno(conv, usuario)
+        _exigir_dueno_o_404(conv, usuario)
     conversaciones.exigir_abierta(conv)
     motivos = motivos_no_devolver(db, conv)
     if motivos:

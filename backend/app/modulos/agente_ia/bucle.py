@@ -244,9 +244,12 @@ def _tx_inicio(
                 raise ReprogramarTrabajo(d.programado_para)
             if isinstance(d, Rechazar):
                 return terminar("entrante", "derivado", enviar=False)
-        if presupuesto.conversacion_excedida(conv, cfg, True) or presupuesto.comprobar_campana(
-            db, cfg, ctx.tipo_campana, ahora
-        ):
+        if presupuesto.conversacion_excedida(conv, cfg, True):
+            eventos.publicar_alerta(
+                db, "presupuesto_conversacion", "aviso", ctx.campana_id, conv.id
+            )
+            return terminar("presupuesto_excedido", "derivado")
+        if presupuesto.comprobar_campana(db, cfg, ctx.tipo_campana, ahora):
             return terminar("presupuesto_excedido", "derivado")
         omitidas = getattr(canal, "omitidas", {}).get(ref.clave, 0)
         previas = historial.filas(db, ref)
@@ -347,9 +350,12 @@ def _tx_previa(
             cfg = db.get(ConfiguracionIACampana, ctx.campana_id)
             if cfg is None or not configuracion.ia_disponible(db, ctx.campana_id):
                 motivo = "ia_desactivada"
-            elif presupuesto.conversacion_excedida(
-                conv, cfg, False
-            ) or presupuesto.comprobar_campana(db, cfg, ctx.tipo_campana, ahora):
+            elif presupuesto.conversacion_excedida(conv, cfg, False):
+                eventos.publicar_alerta(
+                    db, "presupuesto_conversacion", "aviso", ctx.campana_id, conv.id
+                )
+                motivo = "presupuesto_excedido"
+            elif presupuesto.comprobar_campana(db, cfg, ctx.tipo_campana, ahora):
                 motivo = "presupuesto_excedido"
             elif (ahora - inicio).total_seconds() >= s.ia_turno_max_segundos:
                 motivo = "ia_iteraciones"

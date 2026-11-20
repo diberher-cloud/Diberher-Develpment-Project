@@ -86,12 +86,14 @@ def test_sec4_idor_y_agente_sin_acceso(
     cid = db.scalar(select(Conversacion.id))
     h = cabeceras(ctx.agente)
     otro = cabeceras(crear_usuario("agente"))
-    for ruta in ("acciones-ia", "uso-ia", "instrucciones", "historial-ia"):
+    for ruta in ("uso-ia", "instrucciones", "historial-ia"):
         assert client.get(f"{API}/conversaciones/{cid}/{ruta}", headers=otro).status_code == 403
-    assert (
-        client.post(f"{API}/conversaciones/{cid}/devolver-ia", json={}, headers=otro).status_code
-        == 403
-    )
+    # ajena e inexistente responden igual (404): no se revela qué conversaciones existen
+    assert client.get(f"{API}/conversaciones/{cid}/acciones-ia", headers=otro).status_code == 404
+    assert client.get(f"{API}/conversaciones/9999/acciones-ia", headers=otro).status_code == 404
+    for i in (cid, 9999):
+        r = client.post(f"{API}/conversaciones/{i}/devolver-ia", json={}, headers=otro)
+        assert r.status_code == 404 and r.json()["error"]["codigo"] == "NO_ENCONTRADO"
     assert client.get(f"{API}/supervision/ia/conversaciones", headers=h).status_code == 403
     # ningún endpoint de la IA acepta `cliente_id` en el cuerpo
     r = client.post(

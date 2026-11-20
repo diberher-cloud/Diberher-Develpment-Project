@@ -255,7 +255,9 @@ def test_h17_seguimiento(c):
 def test_h18_autorizacion(c):
     usar_llm(
         [
-            herramienta("registrar_autorizacion_whatsapp", cita_cliente="acepto que me escriban"),
+            herramienta(
+                "registrar_autorizacion_whatsapp", cita_cliente="Sí, acepto que me escriban"
+            ),
             {"texto": "ok"},
         ]
     )
@@ -267,7 +269,13 @@ def test_h18_autorizacion(c):
 
 def test_h19_opt_out_sin_texto_del_modelo(c):
     usar_llm(
-        [herramienta("registrar_opt_out", alcance="whatsapp", cita_cliente="no me escriban más")]
+        [
+            herramienta(
+                "registrar_opt_out",
+                alcance="whatsapp",
+                cita_cliente="no me escriban más por favor gracias señor",
+            )
+        ]
     )
     c.decir("no me escriban más por favor gracias señor")
     e = c.db.scalar(select(Exclusion))

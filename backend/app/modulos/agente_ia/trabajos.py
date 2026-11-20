@@ -97,6 +97,12 @@ def traspasar_campana(db: Session, payload: dict[str, Any], ahora: datetime) -> 
         )
 
 
+def evaluacion_agotada(db: Session, payload: dict[str, Any], codigo: str, ahora: datetime) -> None:
+    from app.modulos.agente_ia.evaluacion import servicio
+
+    servicio.evaluacion_agotada(db, payload, codigo, ahora)
+
+
 def evaluacion(db: Session, payload: dict[str, Any], ahora: datetime) -> None:
     from app.modulos.agente_ia.evaluacion import servicio
 

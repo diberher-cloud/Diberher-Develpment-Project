@@ -67,7 +67,7 @@ def test_s2_acciones_enmascaradas_y_dueno(s):
     # el agente solo ve las suyas; si es dueño no ve resultados de consultas
     assert (
         s.client.get(f"{API}/conversaciones/{s.cid}/acciones-ia", headers=s.h_agente).status_code
-        == 403
+        == 404
     )
     s.client.post(
         f"{API}/conversaciones/{s.cid}/asignar",

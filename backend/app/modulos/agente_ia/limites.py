@@ -51,6 +51,8 @@ class ReglasVenta(BaseModel):
 
     max_unidades_por_venta: int = Field(default=1, ge=1, le=100)
     requiere_aceptacion_terminos: bool = True
+    # Texto del derecho de retracto de la campaña (si falta se usa IA_TEXTO_RETRACTO).
+    texto_retracto: str | None = Field(default=None, max_length=500)
 
 
 @dataclass

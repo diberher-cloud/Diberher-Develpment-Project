@@ -162,25 +162,37 @@ def _error_cita(codigo: str) -> ErrorHerramienta:
             "La cita solo aparece en mensajes anteriores a tu propuesta; "
             "pide al cliente que la acepte de nuevo."
         ),
+        "CITA_NEGADA": (
+            "El mensaje del cliente contiene una negación: no es una aceptación. "
+            "Pídele una confirmación explícita."
+        ),
+        "CITA_NO_VALIDA": (
+            "La cita no cubre el mensaje del cliente (cita parcial o fuera de contexto). "
+            "Cita el mensaje completo o pídele una confirmación explícita."
+        ),
     }
     return ErrorHerramienta(codigo, mensajes[codigo])
 
 
 def _localizar_cita(
-    db: Session, canal: CanalIA, ctx: ContextoInteraccion, cita: str, desde: datetime | None
+    db: Session,
+    canal: CanalIA,
+    ctx: ContextoInteraccion,
+    cita: str,
+    desde: datetime | None,
+    *,
+    afirmacion: bool = True,
+    completo: bool = False,
 ) -> int | None:
     """Verifica la cita contra los mensajes del cliente; devuelve el id del mensaje."""
     textos = canal.textos_cliente(db, ctx.ref, None)
-    codigo = guardas_mod.verificar_cita(cita, textos, desde)
+    codigo = guardas_mod.verificar_cita(
+        cita, textos, desde, afirmacion=afirmacion, completo=completo
+    )
     if codigo is not None:
         raise _error_cita(codigo)
-    norm = f" {guardas_mod.opt_out.normalizar_sin_cortesia(cita)} "
-    for t in textos:
-        if norm in f" {guardas_mod.opt_out.normalizar_sin_cortesia(t.texto)} " and (
-            desde is None or t.momento > desde
-        ):
-            return t.id
-    return None
+    r = guardas_mod.localizar_cita(cita, textos, desde, afirmacion=afirmacion, completo=completo)
+    return None if isinstance(r, str) else r.id
 
 
 def _registrar_gestion(
@@ -617,7 +629,9 @@ def _registrar_venta(c: Contexto, e: entradas.RegistrarVenta) -> Resultado:
         db,
         canal,
         ctx,
-        texto_constancia_venta(cot, referencia, s.empresa_nombre, s.ia_texto_retracto),
+        texto_constancia_venta(
+            cot, referencia, s.empresa_nombre, configuracion.texto_retracto(cfg.reglas)
+        ),
         ahora,
     )
     auditoria.registrar(
@@ -709,7 +723,7 @@ def _seguimiento(c: Contexto, e: entradas.ProgramarSeguimiento) -> Resultado:
 
 def _autorizacion(c: Contexto, e: entradas.RegistrarAutorizacion) -> Resultado:
     db, canal, ctx, conv, ahora, _estado = c
-    mensaje_id = _localizar_cita(db, canal, ctx, e.cita_cliente, None)
+    mensaje_id = _localizar_cita(db, canal, ctx, e.cita_cliente, None, completo=True)
     try:
         a = servicio_autorizaciones.crear_por_ia(
             db,
@@ -729,7 +743,7 @@ def _autorizacion(c: Contexto, e: entradas.RegistrarAutorizacion) -> Resultado:
 
 def _opt_out(c: Contexto, e: entradas.RegistrarOptOut) -> Resultado:
     db, canal, ctx, conv, ahora, estado = c
-    _localizar_cita(db, canal, ctx, e.cita_cliente, None)
+    _localizar_cita(db, canal, ctx, e.cita_cliente, None, afirmacion=False, completo=True)
     alcance = {"whatsapp": "whatsapp", "llamadas": "llamadas", "todos_los_canales": "todos"}[
         e.alcance
     ]
