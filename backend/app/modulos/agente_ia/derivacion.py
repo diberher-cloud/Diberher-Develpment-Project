@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.errores import ErrorApp
 from app.modulos.agente_ia import configuracion, historial, mensajes
+from app.modulos.agente_ia import guardas as guardas_mod
 from app.modulos.agente_ia.canal import CanalIA
 from app.modulos.agente_ia.canal_chat import CanalChat
 from app.modulos.agente_ia.contexto import (
@@ -111,6 +112,7 @@ def _etiqueta_media(m: Mensaje) -> str:
 def _mensajes_para_intervencion(
     db: Session, conv: Conversacion
 ) -> list[tuple[str, int, datetime, str]]:
+    """Mensajes desde el último que vio el modelo (todos, sin límites)."""
     visto = db.scalar(
         select(Mensaje.id)
         .where(
@@ -161,17 +163,24 @@ def devolver_a_ia(
         raise ErrorApp(409, motivos[0][0], motivos[0][1])
     ref = RefInteraccion("conversacion", conv.id)
     ctx = cargar_contexto(db, ref)
-    pendientes = _mensajes_para_intervencion(db, conv)
+    todos = _mensajes_para_intervencion(db, conv)
+    s = get_settings()
+    # El bloque se limita a los últimos N mensajes y a IA_MAX_CARACTERES_ENTRADA por mensaje.
+    omitidos = max(len(todos) - s.ia_max_mensajes_turno, 0)
+    pendientes = [
+        (clase, i, momento, guardas_mod.recortar(texto, s.ia_max_caracteres_entrada))
+        for clase, i, momento, texto in todos[omitidos:]
+    ]
     historial.agregar(
         db,
         ref,
         "user",
         "intervencion",
-        mensajes.bloque_intervencion(pendientes, ctx.zona_horaria),
+        mensajes.bloque_intervencion(pendientes, ctx.zona_horaria, omitidos),
         ahora,
     )
     historial.agregar(db, ref, "system", "vuelta_ia", {"texto": mensajes.MENSAJE_VUELTA_IA}, ahora)
-    ids_cliente = [i for clase, i, _, _ in pendientes if clase == "cliente"]
+    ids_cliente = [i for clase, i, _, _ in todos if clase == "cliente"]
     if ids_cliente:
         for m in db.scalars(select(Mensaje).where(Mensaje.id.in_(ids_cliente))):
             m.procesado_ia_en = ahora
@@ -183,6 +192,11 @@ def devolver_a_ia(
     auditoria.registrar(
         db, "ia.devolver", usuario.id, "conversacion", conv.id, {"conversacion_id": conv.id}
     )
+    if todos and todos[-1][0] == "cliente":
+        # El cliente escribió y nadie le respondió: la IA retoma la conversación con un turno.
+        from app.modulos.agente_ia.trabajos import encolar_turno
+
+        encolar_turno(db, conv.id, ahora)
     db.commit()
     return conv
 

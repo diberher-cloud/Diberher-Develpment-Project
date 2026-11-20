@@ -5,6 +5,7 @@ Nunca se actualiza ni se borra una fila. Quien escribe tiene la conversación bl
 """
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -142,3 +143,33 @@ def reparar_pendientes(db: Session, ref: RefInteraccion, ahora: datetime) -> int
             )
     agregar(db, ref, "user", "resultados_herramientas", bloques, ahora)
     return len(bloques)
+
+
+_ID_MENSAJE = re.compile(r'<mensaje_cliente id="(\d+)"')
+
+
+def secuencia_de_tool_use(db: Session, ref: RefInteraccion, tool_use_id: str) -> int | None:
+    """Secuencia de la fila `assistant` del historial que contiene ese `tool_use`."""
+    for f in filas(db, ref):
+        if f.rol == "assistant" and any(
+            isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id") == tool_use_id
+            for b in f.contenido
+        ):
+            return f.secuencia
+    return None
+
+
+def mensajes_vistos_despues(db: Session, ref: RefInteraccion, secuencia: int) -> frozenset[int]:
+    """Ids de mensajes del cliente incorporados al historial DESPUÉS de esa secuencia (entradas
+    o intervención). Es una única fuente de orden (el historial): no depende de relojes."""
+    ids: set[int] = set()
+    for f in filas(db, ref):
+        if (
+            f.secuencia > secuencia
+            and f.rol == "user"
+            and f.tipo in ("entradas_cliente", "intervencion")
+        ):
+            for b in f.contenido:
+                if isinstance(b, dict) and b.get("type") == "text":
+                    ids.update(int(x) for x in _ID_MENSAJE.findall(str(b.get("text", ""))))
+    return frozenset(ids)

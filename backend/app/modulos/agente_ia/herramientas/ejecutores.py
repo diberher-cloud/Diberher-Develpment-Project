@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.errores import ErrorApp
 from app.modulos.agente_ia import arrendamiento, configuracion, eventos
 from app.modulos.agente_ia import guardas as guardas_mod
+from app.modulos.agente_ia import historial as historial_mod
 from app.modulos.agente_ia import limites as lim
 from app.modulos.agente_ia.canal import CanalIA
 from app.modulos.agente_ia.contexto import ContextoInteraccion
@@ -183,15 +184,23 @@ def _localizar_cita(
     *,
     afirmacion: bool = True,
     completo: bool = False,
+    propuesta: AccionIA | None = None,
 ) -> int | None:
     """Verifica la cita contra los mensajes del cliente; devuelve el id del mensaje."""
     textos = canal.textos_cliente(db, ctx.ref, None)
-    codigo = guardas_mod.verificar_cita(
-        cita, textos, desde, afirmacion=afirmacion, completo=completo
-    )
+    posteriores = None
+    if propuesta is not None:
+        secuencia = historial_mod.secuencia_de_tool_use(db, ctx.ref, propuesta.tool_use_id)
+        posteriores = (
+            historial_mod.mensajes_vistos_despues(db, ctx.ref, secuencia)
+            if secuencia is not None
+            else frozenset()
+        )
+    kw = {"afirmacion": afirmacion, "completo": completo, "posteriores": posteriores}
+    codigo = guardas_mod.verificar_cita(cita, textos, desde, **kw)
     if codigo is not None:
         raise _error_cita(codigo)
-    r = guardas_mod.localizar_cita(cita, textos, desde, afirmacion=afirmacion, completo=completo)
+    r = guardas_mod.localizar_cita(cita, textos, desde, **kw)
     return None if isinstance(r, str) else r.id
 
 
@@ -463,16 +472,22 @@ def _registrar_acuerdo(c: Contexto, e: entradas.RegistrarAcuerdo) -> Resultado:
     cc = _cc(db, ctx)
     if _promesa_vigente(db, cc) is not None:
         raise ErrorHerramienta("PROMESA_VIGENTE", "El cliente ya tiene un acuerdo vigente.")
-    sim = next(
-        (a for a in _acciones(db, conv, "simular_acuerdo_pago") if _misma_simulacion(a, e)), None
-    )
-    if sim is None:
+    simulaciones = _acciones(db, conv, "simular_acuerdo_pago")
+    sim = simulaciones[0] if simulaciones and _misma_simulacion(simulaciones[0], e) else None
+    if sim is None:  # la aceptación debe ser de la ÚLTIMA propuesta simulada
         raise ErrorHerramienta(
             "SIMULACION_REQUERIDA",
-            "Simula primero el acuerdo con exactamente los mismos valores.",
+            "Simula primero el acuerdo con exactamente los mismos valores "
+            "(la última simulación debe ser la que se registra).",
         )
     plan, cfg = _plan(db, ctx, ahora, e)
-    mensaje_id = _localizar_cita(db, canal, ctx, e.confirmacion_cliente, sim.creado_en)
+    if plan.como_dict() != sim.resultado:
+        raise ErrorHerramienta(
+            "SIMULACION_DESACTUALIZADA",
+            "Las condiciones cambiaron desde la simulación: simula de nuevo y pide al cliente "
+            "una nueva aceptación.",
+        )
+    mensaje_id = _localizar_cita(db, canal, ctx, e.confirmacion_cliente, None, propuesta=sim)
     datos = TipificacionDatos(
         resultado="promesa_pago",
         promesa=PromesaEntrada(monto=str(plan.monto_total), fecha_pago=plan.cuotas[0].fecha),
@@ -590,15 +605,21 @@ def _misma_cotizacion(a: AccionIA, e: entradas.CotizarVenta) -> bool:
 def _registrar_venta(c: Contexto, e: entradas.RegistrarVenta) -> Resultado:
     db, canal, ctx, conv, ahora, _estado = c
     _exigir_sin_gestion(db, conv)
-    cot_previa = next(
-        (a for a in _acciones(db, conv, "cotizar_venta") if _misma_cotizacion(a, e)), None
-    )
+    cotizaciones = _acciones(db, conv, "cotizar_venta")
+    cot_previa = cotizaciones[0] if cotizaciones and _misma_cotizacion(cotizaciones[0], e) else None
     if cot_previa is None:
         raise ErrorHerramienta(
             "COTIZACION_REQUERIDA", "Cotiza primero la venta con exactamente los mismos valores."
         )
     cot, cfg = _cotizar(db, ctx, e)
-    _localizar_cita(db, canal, ctx, e.confirmacion_cliente, cot_previa.creado_en)
+    if cot.como_dict() != cot_previa.resultado:
+        # precio, descuento o condiciones cambiaron entre cotizar y registrar
+        raise ErrorHerramienta(
+            "COTIZACION_DESACTUALIZADA",
+            "La oferta cambió desde la cotización: cotiza de nuevo y pide al cliente una nueva "
+            "aceptación.",
+        )
+    _localizar_cita(db, canal, ctx, e.confirmacion_cliente, None, propuesta=cot_previa)
     oferta = db.scalar(
         select(OfertaCampana).where(
             OfertaCampana.campana_id == ctx.campana_id,
@@ -713,6 +734,15 @@ def _seguimiento(c: Contexto, e: entradas.ProgramarSeguimiento) -> Resultado:
         volver_a_llamar_en=cuando.astimezone(ahora.tzinfo),
         observacion=e.motivo or None,
     )
+    if not conv.identidad_verificada:
+        # Sin identidad verificada no se ocupa la gestión única: un acuerdo o venta posterior
+        # del titular sigue siendo posible. Solo se agenda el próximo intento del registro.
+        cc = _cc(db, ctx)
+        if cc.estado == "pendiente" and cc.reservado_por is None:
+            cc.proximo_intento_en = cuando.astimezone(ahora.tzinfo)
+        return Resultado(
+            {"registrado": True, "fecha_hora_local": e.fecha_hora_local}, efecto="ninguno"
+        )
     _registrar_gestion(db, ctx, conv, datos, ahora, festivos=festivos)
     return Resultado(
         {"registrado": True, "fecha_hora_local": e.fecha_hora_local},

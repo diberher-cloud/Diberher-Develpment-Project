@@ -187,6 +187,7 @@ def cambiar_dueno(
     actor_id: int | None,
     ahora: datetime,
     resumen: str | None = None,
+    invalidar_turno: bool = True,
 ) -> None:
     """Transición de dueño con efectos en la cola, auditoría y eventos (misma transacción).
 
@@ -227,6 +228,13 @@ def cambiar_dueno(
     if r.rowcount != 1:
         raise ConflictoDueno
     db.refresh(conv)
+    if invalidar_turno and (isinstance(actual, IA) or isinstance(nuevo, IA)):
+        # Tomar, asignar, traspasar o devolver a la IA invalida el turno de IA en curso (su
+        # arrendamiento): el turno obsoleto descarta su respuesta sin escribir ni enviar. Los
+        # traspasos del propio turno (`canal.derivar`) pasan `invalidar_turno=False`.
+        from app.modulos.agente_ia.arrendamiento import invalidar
+
+        invalidar(db, conv.id)
 
     fila = atencion.fila_activa(db, conv.id)
     if isinstance(nuevo, SinAsignar):

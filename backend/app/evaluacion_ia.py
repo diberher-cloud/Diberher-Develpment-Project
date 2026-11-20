@@ -9,9 +9,9 @@ Por defecto usa el cliente de Claude FALSO (determinista, sin red). `--real` exi
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 from app import registro_modelos  # noqa: F401
 from app.config import get_settings
@@ -68,19 +68,14 @@ def main(argv: list[str] | None = None) -> int:
         f"coste {resumen['costo_usd']} USD"
     )
     if args.salida:
-        Path(args.salida).write_text(
-            json.dumps(
-                {
-                    "modo": modo,
-                    "aprobada": aprobada,
-                    "resumen": resumen,
-                    "casos": [r.como_dict() for r in resultados],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        contenido = json.dumps(
+            {"modo": modo, "aprobada": aprobada, "resumen": resumen,
+             "casos": [r.como_dict() for r in resultados]},
+            ensure_ascii=False, indent=2,
+        )  # fmt: skip
+        fd = os.open(args.salida, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(contenido)
     if args.registrar:
         from app.db import SessionLocal
         from app.modulos.agente_ia.evaluacion import servicio

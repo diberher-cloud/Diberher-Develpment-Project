@@ -158,7 +158,9 @@ class CanalChat:
         self, db: Session, ref: RefInteraccion, motivo: str, resumen: str, ahora: datetime
     ) -> int:
         conv = _conv(db, ref)
-        conversaciones.cambiar_dueno(db, conv, SinAsignar(), motivo, None, ahora, resumen=resumen)
+        conversaciones.cambiar_dueno(
+            db, conv, SinAsignar(), motivo, None, ahora, resumen=resumen, invalidar_turno=False
+        )
         fila = atencion.fila_activa(db, conv.id)
         assert fila is not None
         return fila.id

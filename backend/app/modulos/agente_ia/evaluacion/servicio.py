@@ -3,7 +3,9 @@
 import contextlib
 import json
 import os
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -158,16 +160,23 @@ def registrar_resultado(
     e.completada_en = ahora
 
 
-def _ruta_informe(evaluacion_id: int) -> Path:
-    return Path(tempfile.gettempdir()) / f"evaluacion_ia_{evaluacion_id}.json"
+def _inicio_proceso(pid: int) -> str | None:
+    """Tiempo de inicio del proceso (campo 22 de /proc/<pid>/stat): identifica al proceso
+    lanzado aunque el sistema reutilice el pid. None si no se puede leer."""
+    try:
+        datos = Path(f"/proc/{pid}/stat").read_text()
+        return datos.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
 
 
-def _lanzar(e: EvaluacionIA) -> int:
+def _lanzar(e: EvaluacionIA) -> dict:
     """Lanza `python -m app.evaluacion_ia` en un PROCESO APARTE: la evaluación usa su propia BD
     SQLite en memoria y sustituye globales (bus, proveedor de WhatsApp, cliente de IA) que no
-    deben tocar los del worker. Devuelve el pid."""
-    salida = _ruta_informe(e.id)
-    salida.unlink(missing_ok=True)
+    deben tocar los del worker. El informe va a un directorio privado (0700) creado con
+    `mkdtemp`; el fichero lo crea el subproceso con 0600 y sin seguir enlaces simbólicos."""
+    directorio = Path(tempfile.mkdtemp(prefix=f"evaluacion_ia_{e.id}_"))
+    salida = directorio / "informe.json"
     orden = [sys.executable, "-m", "app.evaluacion_ia", "--salida", str(salida)]
     if e.modo == "online":
         orden.append("--real")
@@ -184,7 +193,12 @@ def _lanzar(e: EvaluacionIA) -> int:
         env=dict(os.environ),
         start_new_session=True,
     )
-    return proceso.pid
+    return {
+        "pid": proceso.pid,
+        "inicio": _inicio_proceso(proceso.pid),
+        "host": socket.gethostname(),
+        "ruta": str(salida),
+    }
 
 
 def _vivo(pid: int) -> bool:
@@ -200,6 +214,36 @@ def _vivo(pid: int) -> bool:
         return False
 
 
+def _es_el_lanzado(proceso: dict) -> bool:
+    """¿El pid sigue siendo el proceso que lanzamos (mismo tiempo de inicio)?"""
+    pid = int(proceso.get("pid", 0))
+    return bool(pid) and _vivo(pid) and _inicio_proceso(pid) == proceso.get("inicio")
+
+
+def _matar(proceso: dict) -> None:
+    """killpg SOLO si el pid sigue siendo el proceso lanzado y estamos en su host."""
+    if proceso.get("host") == socket.gethostname() and _es_el_lanzado(proceso):
+        with contextlib.suppress(OSError):
+            os.killpg(int(proceso["pid"]), signal.SIGKILL)
+
+
+def _leer_informe(ruta: str) -> dict:
+    """Lee el informe sin seguir enlaces simbólicos y solo si es un fichero propio."""
+    fd = os.open(ruta, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, encoding="utf-8") as f:
+        if os.fstat(f.fileno()).st_uid != os.getuid():
+            raise ValueError("informe ajeno")
+        return json.load(f)
+
+
+def _limpiar(ruta: str) -> None:
+    directorio = Path(ruta).parent
+    if directorio.name.startswith("evaluacion_ia_") and directorio.parent == Path(
+        tempfile.gettempdir()
+    ):
+        shutil.rmtree(directorio, ignore_errors=True)
+
+
 def _fallar(e: EvaluacionIA, motivo: str, ahora: datetime) -> None:
     e.estado = "fallida"
     e.resumen = {"error": motivo}
@@ -209,42 +253,48 @@ def _fallar(e: EvaluacionIA, motivo: str, ahora: datetime) -> None:
 def ejecutar_evaluacion(db: Session, evaluacion_id: int, ahora: datetime) -> None:
     """Trabajo `ia.evaluacion`, sin bloquear la cola: la primera vez lanza el subproceso y
     reprograma el trabajo; cada vuelta comprueba si terminó (o venció el
-    `IA_EVALUACION_TIMEOUT_SEGUNDOS`: se mata). No se repite por bloqueo caducado
-    (`max_intentos=1`; un gancho `AL_AGOTAR` la marca fallida)."""
+    `IA_EVALUACION_TIMEOUT_SEGUNDOS`: se mata). Solo actúa en el host que lanzó el proceso (en
+    otro reprograma). No se repite por bloqueo caducado (`max_intentos=1`; un gancho
+    `AL_AGOTAR` la marca fallida)."""
     e = db.get(EvaluacionIA, evaluacion_id)
     if e is None or e.estado in ("completada", "fallida"):
         return
     timeout = get_settings().ia_evaluacion_timeout_segundos
-    informe_ruta = _ruta_informe(e.id)
     if e.estado == "pendiente":
+        proceso = _lanzar(e)
         e.estado = "en_curso"
-        e.resumen = {"_proceso": {"pid": _lanzar(e), "desde": ahora.isoformat()}}
+        e.resumen = {"_proceso": {**proceso, "desde": ahora.isoformat()}}
         db.commit()
         raise ReprogramarTrabajo(ahora + timedelta(seconds=SONDEO_SEGUNDOS))
     proceso = (e.resumen or {}).get("_proceso") or {}
-    pid = int(proceso.get("pid", 0))
-    if informe_ruta.exists() and not _vivo(pid):
+    desde = datetime.fromisoformat(proceso["desde"])
+    vencida = (ahora - desde).total_seconds() > timeout
+    if proceso.get("host") != socket.gethostname():
+        if not vencida:  # otro worker lanzó el proceso: solo él lo consulta
+            db.commit()
+            raise ReprogramarTrabajo(ahora + timedelta(seconds=SONDEO_SEGUNDOS))
+        _fallar(e, "TIMEOUT", ahora)
+    elif os.path.exists(proceso["ruta"]) and not _es_el_lanzado(proceso):
         try:
-            datos = json.loads(informe_ruta.read_text(encoding="utf-8"))
+            datos = _leer_informe(proceso["ruta"])
             e.resumen = datos["resumen"]
             e.casos = datos["casos"]
             e.aprobada = bool(datos["aprobada"])
             e.estado = "completada"
             e.completada_en = ahora
-        except (ValueError, KeyError):
+        except (OSError, ValueError, KeyError):
             _fallar(e, "INFORME_INVALIDO", ahora)
-        informe_ruta.unlink(missing_ok=True)
-    elif not _vivo(pid):
+        _limpiar(proceso["ruta"])
+    elif not _es_el_lanzado(proceso):
         _fallar(e, "PROCESO_TERMINADO_SIN_INFORME", ahora)
+        _limpiar(proceso["ruta"])
+    elif vencida:
+        _matar(proceso)
+        _fallar(e, "TIMEOUT", ahora)
+        _limpiar(proceso["ruta"])
     else:
-        desde = datetime.fromisoformat(proceso["desde"])
-        if (ahora - desde).total_seconds() > timeout:
-            with contextlib.suppress(OSError):
-                os.killpg(pid, signal.SIGKILL)
-            _fallar(e, "TIMEOUT", ahora)
-        else:
-            db.commit()
-            raise ReprogramarTrabajo(ahora + timedelta(seconds=SONDEO_SEGUNDOS))
+        db.commit()
+        raise ReprogramarTrabajo(ahora + timedelta(seconds=SONDEO_SEGUNDOS))
     eventos.publicar_evaluacion(db, e.id, e.estado, e.aprobada)
     if e.estado == "fallida" or e.aprobada is False:
         eventos.publicar_alerta(db, "evaluacion_fallida", "aviso", e.campana_id)
@@ -255,9 +305,10 @@ def evaluacion_agotada(db: Session, payload: dict, codigo: str, ahora: datetime)
     """Gancho: el trabajo se agotó (worker caído, bloqueo caducado): `fallida`, sin reintento."""
     e = db.get(EvaluacionIA, int(payload.get("evaluacion_id", 0)))
     if e is not None and e.estado in ("pendiente", "en_curso"):
-        pid = int(((e.resumen or {}).get("_proceso") or {}).get("pid", 0))
-        if pid:
-            with contextlib.suppress(OSError):
-                os.killpg(pid, signal.SIGKILL)
+        proceso = (e.resumen or {}).get("_proceso") or {}
+        if proceso:
+            _matar(proceso)
+            if proceso.get("ruta"):
+                _limpiar(proceso["ruta"])
         _fallar(e, codigo, ahora)
         eventos.publicar_evaluacion(db, e.id, e.estado, e.aprobada)

@@ -1,6 +1,7 @@
 """Evaluaciones por API y CLI (casos E2-E5)."""
 
 import json
+import socket
 
 import pytest
 from sqlalchemy import func, select
@@ -153,7 +154,12 @@ def test_timeout_mata_el_subproceso_y_marca_fallida(
             [sys.executable, "-c", "import time; time.sleep(600)"], start_new_session=True
         )
         lanzados.append(p)
-        return p.pid
+        return {
+            "pid": p.pid,
+            "inicio": servicio._inicio_proceso(p.pid),
+            "host": socket.gethostname(),
+            "ruta": "/tmp/evaluacion_ia_inexistente/informe.json",
+        }
 
     monkeypatch.setattr(servicio, "_lanzar", colgado)
     r = client.post(f"{API}/ia/evaluaciones", json={"modo": "offline"}, headers=h_admin)

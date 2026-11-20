@@ -2,7 +2,7 @@
 núcleo solo conoce `RespuestaLLM` y `ErrorLLM`."""
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from app.config import get_settings
@@ -18,6 +18,8 @@ class RespuestaLLM:
     uso: dict[str, int]  # input/output/cache_creation_input/cache_read_input _tokens
     request_id: str | None
     duracion_ms: int
+    # Uso por iteración con el modelo que la sirvió (fallback del servidor); vacío si no aplica.
+    iteraciones: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ErrorLLM(Exception):

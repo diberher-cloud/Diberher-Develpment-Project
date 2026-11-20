@@ -195,7 +195,7 @@ def test_p2_diez_entrantes_dos_workers(pg):
         assert all(db.get(Mensaje, i).procesado_ia_en is not None for i in ids)
 
 
-def _preparar_aceptacion(m: Mundo, cid):
+def _preparar_aceptacion(m: Mundo, cid, incorporar=False):
     """Verifica y simula en un turno; el cliente acepta después."""
     llm = ClienteLLMFalso([
         herramienta("verificar_identidad", numero_documento="1020304050"),
@@ -207,6 +207,9 @@ def _preparar_aceptacion(m: Mundo, cid):
     with m.pg() as db:
         conv = db.get(Conversacion, cid)
         m.entrante(db, conv, "Sí, acepto el plan", 0, segundos=3600)
+    if incorporar:  # la aceptación entra al historial (única fuente de orden para las citas)
+        asegurar = ClienteLLMFalso([{"texto": "Entendido."}])
+        assert m.turno(cid, asegurar, "w:0b").estado == "completado"
 
 
 REG = {
@@ -267,7 +270,7 @@ def test_p3_tomar_durante_registrar_acuerdo(pg):
 def test_p4_registrar_acuerdo_y_tipificacion_de_voz(pg):
     m = Mundo(pg)
     cid, _ = m.conversacion()
-    _preparar_aceptacion(m, cid)
+    _preparar_aceptacion(m, cid, incorporar=True)
     _lease(m, cid)
     with pg() as db:
         tel = db.scalar(select(Telefono.id).where(Telefono.cliente_id == m.ctx.cc.cliente_id))
@@ -291,7 +294,7 @@ def test_p4_registrar_acuerdo_y_tipificacion_de_voz(pg):
 def test_p5_dos_registros_distinto_tool_use(pg):
     m = Mundo(pg)
     cid, _ = m.conversacion()
-    _preparar_aceptacion(m, cid)
+    _preparar_aceptacion(m, cid, incorporar=True)
     _lease(m, cid)
     res = _en_hilos(
         [lambda: _ejecutar_tool(m, cid, "toolu_a"), lambda: _ejecutar_tool(m, cid, "toolu_b")]
@@ -304,7 +307,7 @@ def test_p5_dos_registros_distinto_tool_use(pg):
 def test_p6_mismo_tool_use_id_tres_veces(pg):
     m = Mundo(pg)
     cid, _ = m.conversacion()
-    _preparar_aceptacion(m, cid)
+    _preparar_aceptacion(m, cid, incorporar=True)
     _lease(m, cid)
     res = _en_hilos([lambda: _ejecutar_tool(m, cid, "toolu_uno")] * 3)
     assert all(not isinstance(r, BaseException) for r in res), res
@@ -402,7 +405,7 @@ def test_p10_herramienta_con_efectos_plantilla_y_cierre_humano(pg):
     m = Mundo(pg)
     ia_id, _ = m.conversacion()
     hum_id, _ = m.conversacion(numero="+573001230000", dueno=Humano(m.agente.id))
-    _preparar_aceptacion(m, ia_id)
+    _preparar_aceptacion(m, ia_id, incorporar=True)
     _lease(m, ia_id)
     with pg() as db:
         pl = plantilla(db, finalidad="cobranza")
@@ -427,3 +430,63 @@ def test_p10_herramienta_con_efectos_plantilla_y_cierre_humano(pg):
     assert not isinstance(res[0], BaseException), res[0]
     assert all(not isinstance(r, BaseException) or isinstance(r, ErrorApp) for r in res), res
     assert NUMERO_PEDRO
+
+
+def test_p11_supervisor_toma_mientras_la_ia_pide_la_despedida(pg):
+    """B1: con un cierre pendiente, si el dueño cambia no se envía la despedida ni se cierra."""
+    m = Mundo(pg)
+    cid, _ = m.conversacion()
+    llm = ClienteLLMFalso([
+        herramienta("cerrar_conversacion", resultado="ninguno", resumen="fin"),
+        {"texto": "Hasta pronto.", "retardo": 1.0},
+    ])  # fmt: skip
+
+    def tomar():
+        time.sleep(0.6)
+        with pg() as db:
+            return conversaciones.tomar(db, m.admin, cid, reloj())
+
+    res = _en_hilos([lambda: m.turno(cid, llm, "w:1"), tomar])
+    assert all(not isinstance(r, BaseException) for r in res), res
+    with pg() as db:
+        conv = db.get(Conversacion, cid)
+        assert conv.atendida_por == "humano" and conv.estado == "abierta"
+        assert db.scalar(select(func.count(Mensaje.id)).where(Mensaje.autor == "ia")) == 0
+        assert (
+            db.scalar(
+                select(func.count(Auditoria.id)).where(Auditoria.accion == "ia.turno_descartado")
+            )
+            >= 1
+        )
+
+
+def test_p12_tomar_y_devolver_durante_la_llamada_descarta_el_turno(pg):
+    """B4: tomar + devolver-ia mientras el modelo responde invalida el turno obsoleto."""
+    m = Mundo(pg)
+    cid, _ = m.conversacion()
+    llm = ClienteLLMFalso(
+        [{"texto": "respuesta obsoleta", "retardo": 1.0}] + [{"texto": "nueva"}] * 3
+    )
+
+    def tomar_y_devolver():
+        time.sleep(0.5)
+        with pg() as db:
+            conversaciones.tomar(db, m.admin, cid, reloj())
+        with pg() as db:
+            return derivacion.devolver_a_ia(db, m.admin, cid, reloj())
+
+    res = _en_hilos([lambda: m.turno(cid, llm, "w:1"), tomar_y_devolver])
+    assert all(not isinstance(r, BaseException) for r in res), res
+    with pg() as db:
+        assert db.get(Conversacion, cid).atendida_por == "ia"
+        assert "obsoleta" not in "".join(str(f.contenido) for f in db.scalars(select(HistorialIA)))
+        assert all("obsoleta" not in (x.cuerpo or "") for x in db.scalars(select(Mensaje)))
+        assert (
+            db.scalar(
+                select(func.count(Auditoria.id)).where(Auditoria.accion == "ia.turno_descartado")
+            )
+            == 1
+        )
+        assert (
+            db.scalar(select(func.count(UsoIA.id))) == 1
+        )  # el coste del turno obsoleto sí se contabiliza

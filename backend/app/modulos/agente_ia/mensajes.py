@@ -123,11 +123,13 @@ MENSAJE_VUELTA_IA = (
 
 
 def bloque_intervencion(
-    mensajes: Sequence[tuple[str, int, datetime, str]], zona: str
+    mensajes: Sequence[tuple[str, int, datetime, str]], zona: str, omitidos: int = 0
 ) -> list[dict[str, str]]:
     """`<intervencion_humana>` con los mensajes desde el último que vio el modelo. Cada tupla es
     (clase, id, momento, texto) con clase `cliente` | `asesor` | `sistema`; escapados."""
     lineas = ["<intervencion_humana>"]
+    if omitidos:
+        lineas.append(f'<mensajes_omitidos cantidad="{omitidos}"/>')
     for clase, ident, momento, texto in mensajes:
         fecha = fecha_local_iso(momento, zona)
         if clase == "cliente":
@@ -199,12 +201,32 @@ def _segmento_a_mensajes(segmento: list[FilaHistorial], sin_system: bool) -> lis
     return mensajes
 
 
+def _sin_fallback(filas: Sequence[FilaHistorial]) -> list[FilaHistorial]:
+    """Quita los bloques `fallback` de los `assistant` (solo valen con la beta de fallback)."""
+    resultado = []
+    for f in filas:
+        if f.rol == "assistant" and any(
+            isinstance(b, dict) and b.get("type") == "fallback" for b in f.contenido
+        ):
+            bloques = [
+                b for b in f.contenido if not (isinstance(b, dict) and b.get("type") == "fallback")
+            ] or [{"type": "text", "text": "(sin contenido)"}]
+            f = FilaHistorial(f.secuencia, f.rol, f.tipo, bloques)
+        resultado.append(f)
+    return resultado
+
+
 def construir_peticion(
-    filas: Sequence[FilaHistorial], modelo: str, modelos_sin_system: frozenset[str]
+    filas: Sequence[FilaHistorial],
+    modelo: str,
+    modelos_sin_system: frozenset[str],
+    con_fallback: bool = True,
 ) -> list[dict[str, Any]]:
     """`messages` a partir del historial append-only. Invariantes (se comprueban): empieza por
     `user`, nunca acaba en `assistant` y cada `tool_use` tiene su `tool_result` a continuación."""
     sin_system = modelo in modelos_sin_system
+    if not con_fallback:
+        filas = _sin_fallback(filas)
     mensajes: list[dict[str, Any]] = []
     for segmento in _segmentos(filas):
         mensajes.extend(_segmento_a_mensajes(segmento, sin_system))

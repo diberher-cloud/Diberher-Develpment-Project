@@ -472,6 +472,7 @@ def localizar_cita(
     afirmacion: bool = True,
     completo: bool = False,
     fraccion_minima: float = FRACCION_MINIMA_CITA,
+    posteriores: frozenset[int] | None = None,
 ) -> TextoCliente | CodigoCita:
     """Mensaje del cliente que respalda la cita, o el código del rechazo.
 
@@ -479,7 +480,9 @@ def localizar_cita(
     - Debe ser el mensaje completo (`completo`) o cubrir al menos `fraccion_minima` de sus
       palabras significativas: una palabra suelta de un mensaje largo no vale.
     - Si es una confirmación (`afirmacion`), el mensaje no puede contener una negación
-      (`no acepto`, `nunca`...). Para opt-out la negación es el contenido y no se comprueba."""
+      (`no acepto`, `nunca`...). Para opt-out la negación es el contenido y no se comprueba.
+    - `posteriores` (ids de mensajes incorporados al historial después de la propuesta) sustituye
+      a la comparación de instantes `desde`: una única fuente de orden, sin relojes de hosts."""
     c = _palabras(cita)
     texto_c = " ".join(c)
     if not 2 <= len(texto_c) <= MAX_CITA:
@@ -491,7 +494,12 @@ def localizar_cita(
         m = _palabras(t.texto)
         if not _contiene(m, c):
             continue
-        if desde is not None and t.momento <= desde:
+        anterior = (
+            t.id not in posteriores
+            if posteriores is not None
+            else desde is not None and t.momento <= desde
+        )
+        if anterior:
             en_anterior = True
             continue
         if afirmacion and tiene_negacion(t.texto):
@@ -519,6 +527,10 @@ def verificar_cita(
     *,
     afirmacion: bool = True,
     completo: bool = False,
+    posteriores: frozenset[int] | None = None,
 ) -> CodigoCita | None:
-    r = localizar_cita(cita, textos_cliente, desde, afirmacion=afirmacion, completo=completo)
+    r = localizar_cita(
+        cita, textos_cliente, desde, afirmacion=afirmacion, completo=completo,
+        posteriores=posteriores,
+    )  # fmt: skip
     return r if isinstance(r, str) else None

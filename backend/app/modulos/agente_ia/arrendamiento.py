@@ -78,3 +78,14 @@ def vigente(db: Session, ref: RefInteraccion, ahora: datetime) -> bool:
         )
         is not None
     )
+
+
+def invalidar(db: Session, conversacion_id: int) -> None:
+    """Borra el arrendamiento de la conversación (cambio de dueño por terceros): el turno en
+    curso pierde su arrendamiento en la siguiente comprobación y se descarta. Con la
+    conversación ya bloqueada (orden de bloqueos: conversaciones -> bloqueos_turno_ia)."""
+    db.execute(
+        delete(BloqueoTurnoIA)
+        .where(BloqueoTurnoIA.clave == f"conversacion:{conversacion_id}")
+        .execution_options(synchronize_session=False)
+    )

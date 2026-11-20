@@ -103,6 +103,12 @@ class ClienteAnthropic:
         detalles = getattr(respuesta, "stop_details", None)
         categoria = getattr(detalles, "category", None) if stop == "refusal" else None
         usage = respuesta.usage
+        iteraciones = []
+        for it in getattr(usage, "iterations", None) or []:
+            if getattr(it, "type", None) in ("message", "fallback_message"):
+                datos = {k: int(getattr(it, k, None) or 0) for k in CLAVES_USO}
+                datos["modelo"] = getattr(it, "model", None) or respuesta.model
+                iteraciones.append(datos)
         return RespuestaLLM(
             id=respuesta.id,
             modelo=respuesta.model,
@@ -112,4 +118,5 @@ class ClienteAnthropic:
             uso={k: int(getattr(usage, k, None) or 0) for k in CLAVES_USO},
             request_id=getattr(respuesta, "_request_id", None),
             duracion_ms=duracion_ms,
+            iteraciones=iteraciones,
         )

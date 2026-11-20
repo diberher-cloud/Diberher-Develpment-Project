@@ -143,6 +143,8 @@ def ejecutar_turno(
     try:
         while True:
             if iteraciones >= s.ia_max_iteraciones:
+                if estado.terminal == "cierre":  # con un cierre propio pendiente no se deriva
+                    raise _Fin("completado")
                 _derivar(sesion, canal, ctx, "ia_iteraciones", reloj, estado)
                 raise _Fin("derivado")
             iteraciones += 1
@@ -161,7 +163,9 @@ def ejecutar_turno(
             except ErrorLLM as exc:
                 _tras_error_llm(sesion, canal, ctx, exc, reloj, trabajador, estado)
                 raise _Fin("error") from None  # solo no transitorios llegan aquí
-            accion = _tx_respuesta(sesion, canal, ctx, r, iteraciones, correcciones, estado, reloj)
+            accion = _tx_respuesta(
+                sesion, canal, ctx, r, iteraciones, correcciones, estado, reloj, trabajador
+            )
             if accion == "corregir":
                 correcciones += 1
                 continue
@@ -254,37 +258,40 @@ def _tx_inicio(
         omitidas = getattr(canal, "omitidas", {}).get(ref.clave, 0)
         previas = historial.filas(db, ref)
         zona = ctx.zona_horaria
+        hoy = ahora.astimezone(ZoneInfo(zona)).date().isoformat()
         if entradas:
             historial.agregar(
                 db, ref, "user", "entradas_cliente",
                 mensajes.formatear_entradas(g.entradas, zona, omitidas), ahora,
             )  # fmt: skip
-            hoy = ahora.astimezone(ZoneInfo(zona)).date().isoformat()
-            if not previas:
-                cliente = db.get(Cliente, ctx.cliente_id)
-                nombre = (cliente.nombre.split() or [None])[0] if cliente else None
-                historial.agregar(
-                    db, ref, "system", "contexto",
-                    {
-                        "texto": mensajes.contexto_sistema(
-                            tipo_campana=ctx.tipo_campana,
-                            tratamiento=ctx.tratamiento,
-                            nombre_pila=nombre,
-                            ahora=ahora,
-                            zona=zona,
-                            iniciada_por=conv.iniciada_por,
-                            identidad_verificada=conv.identidad_verificada,
-                            instrucciones=cfg.instrucciones,
-                        ),
-                        "fecha_local": hoy,
-                    },
-                    ahora,
-                )  # fmt: skip
-            elif historial.ultima_fecha_contexto(db, ref) not in (None, hoy):
-                historial.agregar(
-                    db, ref, "system", "contexto",
-                    {"texto": mensajes.cambio_de_fecha(ahora, zona), "fecha_local": hoy}, ahora,
-                )  # fmt: skip
+        if not any(f.tipo == "contexto" for f in previas):
+            # Contexto inicial: también para conversaciones que nunca pasaron por la IA
+            # (p. ej. abiertas por un agente y devueltas a la IA) aunque no haya entradas nuevas.
+            cliente = db.get(Cliente, ctx.cliente_id)
+            nombre = (cliente.nombre.split() or [None])[0] if cliente else None
+            historial.agregar(
+                db, ref, "system", "contexto",
+                {
+                    "texto": mensajes.contexto_sistema(
+                        tipo_campana=ctx.tipo_campana,
+                        tratamiento=ctx.tratamiento,
+                        nombre_pila=nombre,
+                        ahora=ahora,
+                        zona=zona,
+                        iniciada_por=conv.iniciada_por,
+                        identidad_verificada=conv.identidad_verificada,
+                        instrucciones=cfg.instrucciones,
+                    ),
+                    "fecha_local": hoy,
+                },
+                ahora,
+            )  # fmt: skip
+        elif entradas and historial.ultima_fecha_contexto(db, ref) not in (None, hoy):
+            historial.agregar(
+                db, ref, "system", "contexto",
+                {"texto": mensajes.cambio_de_fecha(ahora, zona), "fecha_local": hoy}, ahora,
+            )  # fmt: skip
+        if entradas:
             canal.marcar_procesadas(db, entradas, ahora)
         _agregar_instrucciones(db, ref, ahora)
         conv.turnos_ia += 1
@@ -342,6 +349,9 @@ def _tx_previa(
     with sesion() as db:
         ahora = reloj()
         est = canal.bloquear(db, ctx.ref)
+        if estado.terminal == "cierre" and not (est.abierta and est.dueno == "ia"):
+            db.rollback()  # un supervisor tomó o traspasó la conversación: no se cierra ni se envía
+            raise _Fin("sin_respuesta", silencioso=True)
         if estado.terminal is None:
             if not est.abierta or est.dueno != "ia":
                 db.rollback()
@@ -364,8 +374,17 @@ def _tx_previa(
                 db.rollback()
                 raise _Fin("sin_respuesta", silencioso=True)
             filas = historial.leer(db, ctx.ref)
-            db.commit()
-            return mensajes.construir_peticion(filas, ctx.modelo, s.modelos_ia_sin_system)
+            try:
+                peticion = mensajes.construir_peticion(
+                    filas, ctx.modelo, s.modelos_ia_sin_system, s.ia_fallback_rechazo
+                )
+            except mensajes.PeticionInvalida:
+                # Historial que no produce una petición válida: derivación controlada
+                logger.error("ia.peticion_invalida conversacion=%s", ctx.ref.id)
+                motivo = "ia_stop_inesperado"
+            else:
+                db.commit()
+                return peticion
         if est.abierta and est.dueno == "ia":
             derivacion.derivar_determinista(db, canal, ctx.ref, motivo, ahora)
             eventos.publicar_turno(db, ctx.ref.tipo, ctx.ref.id, ctx.campana_id, "derivado")
@@ -411,8 +430,20 @@ def _registrar_uso(
     ahora: datetime,
 ) -> UsoIA:
     s = get_settings()
-    precios = s.precios_ia.get(r.modelo) or s.precios_ia[ctx.modelo]
-    costo = costo_usd(r.uso, precios, s.ia_cache_ttl)
+    costo = Decimal(0)
+    uso_total = dict(r.uso)
+    if r.iteraciones:
+        # Con fallback del servidor la respuesta puede venir de otro modelo: cada iteración se
+        # precia con el modelo que la sirvió y los tokens son la suma de las iteraciones.
+        uso_total = dict.fromkeys(r.uso, 0)
+        for it in r.iteraciones:
+            precios = s.precios_ia.get(it.get("modelo") or r.modelo) or s.precios_ia[ctx.modelo]
+            costo += costo_usd(it, precios, s.ia_cache_ttl)
+            for k in uso_total:
+                uso_total[k] += int(it.get(k, 0))
+    else:
+        precios = s.precios_ia.get(r.modelo) or s.precios_ia[ctx.modelo]
+        costo = costo_usd(r.uso, precios, s.ia_cache_ttl)
     uso = UsoIA(
         conversacion_id=ctx.ref.id if ctx.ref.tipo == "conversacion" else None,
         llamada_id=ctx.ref.id if ctx.ref.tipo == "llamada" else None,
@@ -426,10 +457,10 @@ def _registrar_uso(
         iteracion=iteracion,
         stop_reason=r.stop_reason[:20],
         stop_categoria=r.stop_categoria,
-        input_tokens=r.uso.get("input_tokens", 0),
-        output_tokens=r.uso.get("output_tokens", 0),
-        cache_creation_input_tokens=r.uso.get("cache_creation_input_tokens", 0),
-        cache_read_input_tokens=r.uso.get("cache_read_input_tokens", 0),
+        input_tokens=uso_total.get("input_tokens", 0),
+        output_tokens=uso_total.get("output_tokens", 0),
+        cache_creation_input_tokens=uso_total.get("cache_creation_input_tokens", 0),
+        cache_read_input_tokens=uso_total.get("cache_read_input_tokens", 0),
         costo_usd=costo,
         duracion_ms=r.duracion_ms,
         creado_en=ahora,
@@ -493,6 +524,7 @@ def _tx_respuesta(
     correcciones: int,
     estado: EstadoTurno,
     reloj: Reloj,
+    trabajador: str,
 ) -> str:
     """Devuelve: `herramientas` | `continuar` | `corregir` | estado final del turno."""
     with sesion() as db:
@@ -503,6 +535,16 @@ def _tx_respuesta(
         propio = estado.terminal is not None
         if not propio and not (est.abierta and est.dueno == "ia"):
             db.commit()  # solo el uso: la respuesta NO entra en el historial
+            raise _Fin("sin_respuesta", silencioso=True)
+        if estado.terminal == "cierre" and not (est.abierta and est.dueno == "ia"):
+            _auditar_descartado(db, ctx, "dueno_cambiado")
+            db.commit()
+            raise _Fin("sin_respuesta", silencioso=True)
+        if not arrendamiento.renovar(db, ctx.ref, trabajador, ahora):
+            # Tomar, traspasar o devolver a la IA durante la llamada invalidó el turno: la
+            # respuesta no se escribe ni se envía (solo el uso y una auditoría).
+            _auditar_descartado(db, ctx, "arrendamiento_invalidado")
+            db.commit()
             raise _Fin("sin_respuesta", silencioso=True)
         if not propio and not configuracion.ia_disponible(db, ctx.campana_id):
             # Kill switch durante la llamada: la respuesta no se registra ni se envía.
@@ -529,8 +571,13 @@ def _tx_respuesta(
             db.commit()
             return "herramientas"
         if sr == "pause_turn":
+            if any(b.get("type") == "server_tool_use" for b in r.contenido):
+                db.commit()
+                return "continuar"
+            # Sin herramientas de servidor no hay nada que reanudar: derivación controlada.
+            derivacion.derivar_determinista(db, canal, ctx.ref, "ia_stop_inesperado", ahora)
             db.commit()
-            return "continuar"
+            return "derivado"
         if sr == "end_turn":
             return _fin_de_turno(db, canal, ctx, conv, est, r, estado, correcciones, ahora)
         if sr == "refusal":
@@ -547,6 +594,13 @@ def _tx_respuesta(
         derivacion.derivar_determinista(db, canal, ctx.ref, motivo, ahora)
         db.commit()
         return "derivado"
+
+
+def _auditar_descartado(db: Session, ctx: ContextoInteraccion, motivo: str) -> None:
+    auditoria.registrar(
+        db, "ia.turno_descartado", None, "conversacion", ctx.ref.id,
+        {"conversacion_id": ctx.ref.id, "motivo": motivo},
+    )  # fmt: skip
 
 
 def _fin_de_turno(
@@ -583,7 +637,7 @@ def _fin_de_turno(
         db.commit()
         return "derivado"
     if terminal == "cierre":
-        if texto and fallo is None and est.abierta:
+        if texto and fallo is None and est.abierta and est.dueno == "ia":
             _enviar_texto(db, canal, ctx, conv, texto, ahora)
         db.commit()
         return "completado"
@@ -661,7 +715,9 @@ def _tx_final(
     with sesion() as db:
         ahora = reloj()
         est = canal.bloquear(db, ctx.ref)
-        if estado.terminal == "cierre" and est.abierta:
+        if estado.terminal == "cierre" and est.abierta and est.dueno != "ia":
+            _auditar_descartado(db, ctx, "cierre_omitido_dueno_cambiado")
+        elif estado.terminal == "cierre" and est.abierta:
             canal.cerrar(db, ctx.ref, ahora)
             auditoria.registrar(
                 db, "ia.cierre", None, "conversacion", ctx.ref.id,

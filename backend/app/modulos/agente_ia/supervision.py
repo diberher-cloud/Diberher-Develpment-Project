@@ -5,12 +5,10 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.errores import ErrorApp, detalle
-from app.modulos.agente_ia import arrendamiento
-from app.modulos.agente_ia.contexto import RefInteraccion
 from app.modulos.agente_ia.esquemas import (
     AccionIA as AccionSalida,
 )
@@ -32,6 +30,7 @@ from app.modulos.agente_ia.esquemas import (
 )
 from app.modulos.agente_ia.modelos import (
     AccionIA,
+    BloqueoTurnoIA,
     ErrorIA,
     HistorialIA,
     InstruccionSupervisor,
@@ -115,21 +114,41 @@ def listar_conversaciones(
     consulta = consulta.order_by(c.ultimo_mensaje_en.desc(), c.id.desc())
     filas, total = paginar(db, consulta, params)
     bases = salidas.resumenes(db, filas, usuario, ahora)
-    items = []
-    for conv, base in zip(filas, bases, strict=True):
-        ref = RefInteraccion("conversacion", conv.id)
-        ultima = db.scalar(
-            select(AccionIA)
-            .where(AccionIA.conversacion_id == conv.id)
-            .order_by(AccionIA.id.desc())
-            .limit(1)
-        )
-        pendientes = db.scalar(
-            select(func.count(InstruccionSupervisor.id)).where(
-                InstruccionSupervisor.conversacion_id == conv.id,
+    ids = [conv.id for conv in filas]
+    # Datos de la página en UNA consulta por tipo (sin N+1).
+    gestiones = {
+        t.conversacion_id: GestionIA(resultado=t.resultado, tipificacion_id=t.id)
+        for t in db.scalars(select(Tipificacion).where(Tipificacion.conversacion_id.in_(ids)))
+    }
+    ultimas_ids = (
+        select(func.max(AccionIA.id))
+        .where(AccionIA.conversacion_id.in_(ids))
+        .group_by(AccionIA.conversacion_id)
+    )
+    ultimas = {
+        a.conversacion_id: a
+        for a in db.scalars(select(AccionIA).where(AccionIA.id.in_(ultimas_ids)))
+    }
+    pendientes = dict(
+        db.execute(
+            select(InstruccionSupervisor.conversacion_id, func.count(InstruccionSupervisor.id))
+            .where(
+                InstruccionSupervisor.conversacion_id.in_(ids),
                 InstruccionSupervisor.aplicada_en.is_(None),
             )
+            .group_by(InstruccionSupervisor.conversacion_id)
+        ).all()
+    )
+    en_curso = set(
+        db.scalars(
+            select(BloqueoTurnoIA.conversacion_id).where(
+                BloqueoTurnoIA.conversacion_id.in_(ids), BloqueoTurnoIA.expira_en >= ahora
+            )
         )
+    )
+    items = []
+    for conv, base in zip(filas, bases, strict=True):
+        ultima = ultimas.get(conv.id)
         items.append(
             ConversacionIAResumen(
                 **base.model_dump(),
@@ -138,7 +157,7 @@ def listar_conversaciones(
                     turnos=conv.turnos_ia,
                     costo_usd=conv.costo_usd_acumulado,
                     modelo=conv.modelo_ia or "",
-                    gestion=gestion_de(db, conv.id),
+                    gestion=gestiones.get(conv.id),
                     ultima_accion=(
                         UltimaAccion(
                             herramienta=ultima.herramienta,
@@ -148,8 +167,8 @@ def listar_conversaciones(
                         if ultima
                         else None
                     ),
-                    turno_en_curso=arrendamiento.vigente(db, ref, ahora),
-                    instrucciones_pendientes=pendientes or 0,
+                    turno_en_curso=conv.id in en_curso,
+                    instrucciones_pendientes=pendientes.get(conv.id, 0),
                 ),
             )
         )
@@ -346,45 +365,59 @@ def metricas(
         raise _validacion("desde", "No puede ser posterior a 'hasta'.")
     ini, fin = _rango(db, desde, hasta)
     c = Conversacion
-    consulta = select(c).where(c.modelo_ia.is_not(None), c.abierta_en >= ini, c.abierta_en < fin)
+    filtro = [c.modelo_ia.is_not(None), c.abierta_en >= ini, c.abierta_en < fin]
     if campana_id is not None:
-        consulta = consulta.where(c.campana_id == campana_id)
-    convs = list(db.scalars(consulta))
-    ids = [x.id for x in convs]
+        filtro.append(c.campana_id == campana_id)
+    ids_q = select(c.id).where(*filtro)  # subconsulta: nada se trae a Python por conversación
 
-    resultados: dict[str, int] = {}
-    monto_acuerdos, n_acuerdos = Decimal(0), 0
-    valor_ventas, n_ventas = Decimal(0), 0
-    derivaciones: dict[str, int] = {}
-    entradas = salida = escritura = lectura = 0
-    costo = Decimal(0)
-    if ids:
-        for t, p, v in db.execute(
-            select(Tipificacion, PromesaPago, Venta)
-            .outerjoin(PromesaPago, PromesaPago.tipificacion_id == Tipificacion.id)
-            .outerjoin(Venta, Venta.tipificacion_id == Tipificacion.id)
-            .where(Tipificacion.conversacion_id.in_(ids), Tipificacion.origen == "agente_ia")
-        ):
-            resultados[t.resultado] = resultados.get(t.resultado, 0) + 1
-            if p is not None:
-                n_acuerdos += 1
-                monto_acuerdos += p.monto
-            if v is not None:
-                n_ventas += 1
-                valor_ventas += v.valor
-        for motivo, n in db.execute(
+    def suma(condicion):
+        return func.coalesce(func.sum(case((condicion, 1), else_=0)), 0)
+
+    total, verificadas, opt_outs, cerradas_ia, cerradas_inact = db.execute(
+        select(
+            func.count(c.id),
+            suma(c.identidad_verificada.is_(True)),
+            suma(c.motivo_cierre == "opt_out"),
+            suma(c.motivo_cierre == "sistema"),
+            suma(c.motivo_cierre == "inactividad"),
+        ).where(*filtro)
+    ).one()
+    resultados = dict(
+        db.execute(
+            select(Tipificacion.resultado, func.count(Tipificacion.id))
+            .where(Tipificacion.conversacion_id.in_(ids_q), Tipificacion.origen == "agente_ia")
+            .group_by(Tipificacion.resultado)
+        ).all()
+    )
+    n_acuerdos, monto_acuerdos = db.execute(
+        select(func.count(PromesaPago.id), func.coalesce(func.sum(PromesaPago.monto), 0))
+        .join(Tipificacion, Tipificacion.id == PromesaPago.tipificacion_id)
+        .where(Tipificacion.conversacion_id.in_(ids_q), Tipificacion.origen == "agente_ia")
+    ).one()
+    n_ventas, valor_ventas = db.execute(
+        select(func.count(Venta.id), func.coalesce(func.sum(Venta.valor), 0))
+        .join(Tipificacion, Tipificacion.id == Venta.tipificacion_id)
+        .where(Tipificacion.conversacion_id.in_(ids_q), Tipificacion.origen == "agente_ia")
+    ).one()
+    derivaciones = dict(
+        db.execute(
             select(ColaAtencion.motivo, func.count(ColaAtencion.id))
-            .where(ColaAtencion.conversacion_id.in_(ids), ColaAtencion.motivo.in_(MOTIVOS_IA))
+            .where(ColaAtencion.conversacion_id.in_(ids_q), ColaAtencion.motivo.in_(MOTIVOS_IA))
             .group_by(ColaAtencion.motivo)
-        ):
-            derivaciones[motivo] = n
-        for u in db.scalars(select(UsoIA).where(UsoIA.conversacion_id.in_(ids))):
-            entradas += u.input_tokens
-            salida += u.output_tokens
-            escritura += u.cache_creation_input_tokens
-            lectura += u.cache_read_input_tokens
-            costo += u.costo_usd
-    tiempos = _tiempos_respuesta(db, ids)
+        ).all()
+    )
+    entradas, salida, escritura, lectura, costo = db.execute(
+        select(
+            func.coalesce(func.sum(UsoIA.input_tokens), 0),
+            func.coalesce(func.sum(UsoIA.output_tokens), 0),
+            func.coalesce(func.sum(UsoIA.cache_creation_input_tokens), 0),
+            func.coalesce(func.sum(UsoIA.cache_read_input_tokens), 0),
+            func.coalesce(func.sum(UsoIA.costo_usd), 0),
+        ).where(UsoIA.conversacion_id.in_(ids_q))
+    ).one()
+    costo = Decimal(costo)
+    monto_acuerdos, valor_ventas = Decimal(monto_acuerdos), Decimal(valor_ventas)
+    tiempos = _tiempos_respuesta(db, ids_q)
     errores: dict[str, int] = {}
     consulta_err = select(ErrorIA.codigo, func.count(ErrorIA.id)).where(
         ErrorIA.creado_en >= ini, ErrorIA.creado_en < fin
@@ -394,32 +427,32 @@ def metricas(
     for codigo, n in db.execute(consulta_err.group_by(ErrorIA.codigo)):
         errores[codigo] = n
     guardas: dict[str, int] = {}
-    if ids:
-        for fila in db.scalars(
-            select(Auditoria).where(
+    if total:
+        ids = set(db.scalars(ids_q))
+        for detalle in db.scalars(
+            select(Auditoria.detalle).where(
                 Auditoria.accion == "ia.guarda",
                 Auditoria.creado_en >= ini,
                 Auditoria.creado_en < fin,
             )
         ):
-            if fila.detalle.get("conversacion_id") in ids:
-                codigo = fila.detalle.get("codigo", "?")
+            if detalle.get("conversacion_id") in ids:
+                codigo = detalle.get("codigo", "?")
                 guardas[codigo] = guardas.get(codigo, 0) + 1
-    verificadas = sum(1 for x in convs if x.identidad_verificada)
     return MetricasIA(
         campana_id=campana_id,
         desde=desde.isoformat(),
         hasta=hasta.isoformat(),
-        conversaciones=len(convs),
+        conversaciones=total,
         con_identidad_verificada=verificadas,
-        tasa_verificacion=round(verificadas / len(convs), 4) if convs else None,
+        tasa_verificacion=round(verificadas / total, 4) if total else None,
         acuerdos=Importe(numero=n_acuerdos, monto_total=monto_acuerdos),
         ventas=ImporteVenta(numero=n_ventas, valor_total=valor_ventas),
         resultados=resultados,
         derivaciones=derivaciones,
-        opt_outs=sum(1 for x in convs if x.motivo_cierre == "opt_out"),
-        cerradas_por_ia=sum(1 for x in convs if x.motivo_cierre == "sistema"),
-        cerradas_por_inactividad=sum(1 for x in convs if x.motivo_cierre == "inactividad"),
+        opt_outs=opt_outs,
+        cerradas_por_ia=cerradas_ia,
+        cerradas_por_inactividad=cerradas_inact,
         costo_usd=costo,
         costo_por_acuerdo_usd=(costo / n_acuerdos) if n_acuerdos else None,
         tokens=Tokens(
@@ -432,20 +465,19 @@ def metricas(
     )
 
 
-def _tiempos_respuesta(db: Session, ids: list[int]) -> list[int]:
-    """Del `creado_en` del último entrante de cada turno al del mensaje `ia` siguiente."""
-    if not ids:
-        return []
+def _tiempos_respuesta(db: Session, ids_q) -> list[int]:
+    """Del `creado_en` del último entrante de cada turno al del mensaje `ia` siguiente (solo
+    columnas, en flujo; el emparejamiento por turno no es una agregación SQL simple)."""
     tiempos: list[int] = []
     ultimo: dict[int, datetime | None] = {}
-    for m in db.scalars(
-        select(Mensaje)
-        .where(Mensaje.conversacion_id.in_(ids), Mensaje.autor.in_(("cliente", "ia")))
+    for conv_id, autor, creado in db.execute(
+        select(Mensaje.conversacion_id, Mensaje.autor, Mensaje.creado_en)
+        .where(Mensaje.conversacion_id.in_(ids_q), Mensaje.autor.in_(("cliente", "ia")))
         .order_by(Mensaje.conversacion_id, Mensaje.id)
-    ):
-        if m.autor == "cliente":
-            ultimo[m.conversacion_id] = m.creado_en
-        elif ultimo.get(m.conversacion_id) is not None:
-            tiempos.append(int((m.creado_en - ultimo[m.conversacion_id]).total_seconds() * 1000))
-            ultimo[m.conversacion_id] = None
+    ).yield_per(1000):
+        if autor == "cliente":
+            ultimo[conv_id] = creado
+        elif ultimo.get(conv_id) is not None:
+            tiempos.append(int((creado - ultimo[conv_id]).total_seconds() * 1000))
+            ultimo[conv_id] = None
     return tiempos

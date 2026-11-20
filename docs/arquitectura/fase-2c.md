@@ -2328,3 +2328,41 @@ usuario (coste de cambio bajo salvo S-C3):
   configuración; un supervisor puede "instruir" a la IA para presionar al cliente — los límites del
   servidor no lo impiden en el tono: queda auditado (`ia.instruccion`) y visible en la conversación de
   supervisión.
+
+---
+
+## Revisión post-revisor 2C
+
+Cambios de contrato y de comportamiento introducidos tras la revisión (ver el código en
+`backend/app/modulos/agente_ia/`):
+
+- **Turno obsoleto (B4).** `conversaciones.servicio.cambiar_dueno` invalida el arrendamiento de
+  `bloqueos_turno_ia` cuando el dueño pasa **desde** o **hacia** `ia` (tomar, asignar, traspasar,
+  devolver-ia). El turno en curso renueva el arrendamiento antes de registrar cada respuesta y
+  de ejecutar cada herramienta: si lo perdió, descarta la respuesta sin escribir `historial_ia`
+  ni enviar nada (solo `uso_ia` y la auditoría `ia.turno_descartado`). Los traspasos del propio
+  turno pasan `invalidar_turno=False`.
+- **Cierre pendiente (B1).** Con `cerrar_conversacion` pendiente, la despedida solo se envía y la
+  conversación solo se cierra si sigue abierta **y** atendida por la IA; si no, se audita
+  (`ia.turno_descartado`). Un cierre pendiente propio nunca deriva por `ia_iteraciones`.
+- **Aceptaciones (B2, S5).** `registrar_acuerdo_pago` y `registrar_venta` comparan el resultado
+  recalculado con el de la simulación/cotización guardada (`SIMULACION_DESACTUALIZADA`,
+  `COTIZACION_DESACTUALIZADA`) y exigen que esa sea la **última** propuesta. La cita debe estar
+  en un mensaje del cliente incorporado al historial **después** de la fila `assistant` que hizo
+  la propuesta (orden del historial, no relojes). Nuevos códigos de cita: `CITA_NEGADA` y
+  `CITA_NO_VALIDA` (la cita es parcial, o el mensaje contiene una negación).
+- **Contexto (B3).** El mensaje de contexto inicial se añade cuando no existe ninguna fila
+  `contexto`, también en conversaciones devueltas a la IA que nunca pasaron por ella.
+- **devolver-ia (S7).** Si el último mensaje pendiente es del cliente, encola `ia.turno`; el
+  bloque `<intervencion_humana>` se limita a `IA_MAX_MENSAJES_TURNO` y a
+  `IA_MAX_CARACTERES_ENTRADA` por mensaje (`<mensajes_omitidos cantidad="n"/>`).
+- **Seguimiento (S8).** Sin identidad verificada, `programar_seguimiento` solo agenda
+  `proximo_intento_en` del registro y no ocupa la gestión única.
+- **`requiere_aceptacion_terminos` (S6).** Se cumple por construcción: no hay venta sin una
+  aceptación citada, posterior a la última cotización (que lleva las condiciones). No hay
+  comprobación adicional; el campo es orientativo.
+- **Fallback (S3).** `uso_ia` suma `usage.iterations` y precia cada iteración con el modelo que
+  la sirvió; sin la beta de fallback no se reenvían bloques `fallback` del historial.
+- **Evaluación (S1, S2).** El subproceso escribe el informe en un directorio `mkdtemp` (0700) con
+  fichero 0600 sin seguir enlaces; `resumen._proceso` guarda host y tiempo de inicio del
+  proceso; solo el host que lo lanzó lo sondea y antes de `killpg` se verifica el proceso.
