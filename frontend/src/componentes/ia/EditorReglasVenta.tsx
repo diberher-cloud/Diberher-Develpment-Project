@@ -1,5 +1,5 @@
 import { Campo } from '../Campo';
-import type { FormVenta } from '../../utilidades/ia';
+import { MAX_TEXTO_RETRACTO, type FormVenta } from '../../utilidades/ia';
 
 interface Props {
   valor: FormVenta;
@@ -23,6 +23,16 @@ export function EditorReglasVenta({ valor, onCambio, error, deshabilitado }: Pro
           onChange={(e) => onCambio({ ...valor, requiere_aceptacion_terminos: e.target.checked })} />{' '}
         Exigir aceptación expresa de los términos antes de registrar la venta
       </label>
+      <Campo
+        etiqueta="Texto de retracto"
+        ayuda={`Texto legal del derecho de retracto que se incluirá en la constancia de cada venta. Si lo deja vacío se usa el texto global del servidor. ${valor.texto_retracto.length}/${MAX_TEXTO_RETRACTO} caracteres.`}
+        error={error('reglas.texto_retracto')}
+      >
+        {(p) => (
+          <textarea {...p} name="texto_retracto" rows={3} value={valor.texto_retracto}
+            onChange={(e) => onCambio({ ...valor, texto_retracto: e.target.value })} />
+        )}
+      </Campo>
     </fieldset>
   );
 }

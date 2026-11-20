@@ -49,6 +49,20 @@ function EnlaceRequisito({ codigo, campanaId, onIrAPestana }: { codigo: CodigoRe
           Ir a las ofertas
         </button>
       );
+    case 'RETRACTO_SIN_TEXTO':
+      return (
+        <button
+          type="button"
+          className="enlace"
+          onClick={() => {
+            const el = document.querySelector<HTMLTextAreaElement>('textarea[name="texto_retracto"]');
+            el?.scrollIntoView?.();
+            el?.focus();
+          }}
+        >
+          Escribir el texto de retracto
+        </button>
+      );
     case 'WHATSAPP_NO_HABILITADO':
       return <Link to={`/campanas/${campanaId}/editar`}>Editar la campaña</Link>;
     case 'IA_GLOBAL_DESACTIVADA':

@@ -23,7 +23,7 @@ import { RequisitosActivacion } from './RequisitosActivacion';
 const ESFUERZOS: EsfuerzoIA[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const CAMPOS_BASE = [
   'modelo', 'esfuerzo', 'prompt_version', 'tratamiento', 'instrucciones', 'verificacion.max_intentos', 'presupuesto_usd_mensual',
-  'max_costo_conversacion_usd', 'max_turnos_conversacion', 'reglas.max_unidades_por_venta', 'reglas.base_descuento',
+  'max_costo_conversacion_usd', 'max_turnos_conversacion', 'reglas.max_unidades_por_venta', 'reglas.texto_retracto', 'reglas.base_descuento',
   'reglas.descuento_max_pct', 'reglas.monto_minimo_promesa', 'reglas.monto_minimo_cuota', 'reglas.max_cuotas',
   'reglas.plazo_max_dias_primer_pago', 'reglas.plazo_max_dias_total', 'reglas.periodicidades', 'version_esperada',
 ];

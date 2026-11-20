@@ -37,6 +37,7 @@ export const ETIQUETA_REQUISITO: Record<CodigoRequisitoIA, string> = {
   IA_GLOBAL_DESACTIVADA: 'IA desactivada globalmente',
   PROVEEDOR_FALSO_EN_PRODUCCION: 'Proveedor de pruebas en producción',
   MODELO_SIN_PRECIO: 'Modelo sin precio configurado',
+  RETRACTO_SIN_TEXTO: 'Falta el texto legal del derecho de retracto',
 };
 export const ETIQUETA_ALERTA_IA: Record<TipoAlertaIA, string> = {
   presupuesto_campana: 'Presupuesto de la campaña', presupuesto_conversacion: 'Coste de una conversación',
@@ -166,7 +167,8 @@ export interface FormCobranza {
   monto_minimo_promesa: string; monto_minimo_cuota: string; max_cuotas: string;
   plazo_max_dias_primer_pago: string; plazo_max_dias_total: string; periodicidades: Exclude<Periodicidad, 'unica'>[];
 }
-export interface FormVenta { max_unidades_por_venta: string; requiere_aceptacion_terminos: boolean }
+export interface FormVenta { max_unidades_por_venta: string; requiere_aceptacion_terminos: boolean; texto_retracto: string }
+export const MAX_TEXTO_RETRACTO = 500;
 export interface FormIA {
   modelo: string; esfuerzo: EsfuerzoIA; prompt_version: string; tratamiento: Tratamiento; instrucciones: string;
   max_intentos: string; presupuesto_usd_mensual: string; max_costo_conversacion_usd: string; max_turnos_conversacion: string;
@@ -179,7 +181,7 @@ const COBRANZA_DEFECTO: FormCobranza = {
   base_descuento: 'saldo_mora', descuento_max_pct: '0.00', tramos: [], monto_minimo_promesa: '0.00', monto_minimo_cuota: '0.00',
   max_cuotas: '1', plazo_max_dias_primer_pago: '7', plazo_max_dias_total: '30', periodicidades: ['mensual'],
 };
-const VENTA_DEFECTO: FormVenta = { max_unidades_por_venta: '1', requiere_aceptacion_terminos: true };
+const VENTA_DEFECTO: FormVenta = { max_unidades_por_venta: '1', requiere_aceptacion_terminos: true, texto_retracto: '' };
 
 export function formDesdeConfig(c: ConfiguracionIA): FormIA {
   let cobranza = COBRANZA_DEFECTO;
@@ -195,7 +197,7 @@ export function formDesdeConfig(c: ConfiguracionIA): FormIA {
     };
   } else if (c.reglas && c.campana_tipo === 'venta') {
     const r = c.reglas as ReglasVenta;
-    venta = { max_unidades_por_venta: String(r.max_unidades_por_venta), requiere_aceptacion_terminos: r.requiere_aceptacion_terminos };
+    venta = { max_unidades_por_venta: String(r.max_unidades_por_venta), requiere_aceptacion_terminos: r.requiere_aceptacion_terminos, texto_retracto: r.texto_retracto ?? '' };
   }
   return {
     modelo: c.modelo, esfuerzo: c.esfuerzo, prompt_version: String(c.prompt_version), tratamiento: c.tratamiento,
@@ -285,6 +287,9 @@ export function validarFormIA(f: FormIA, tipo: TipoCampana): Record<string, stri
   else if (!esEntero(f.venta.max_unidades_por_venta) || Number(f.venta.max_unidades_por_venta) < 1 || Number(f.venta.max_unidades_por_venta) > 100) {
     e['reglas.max_unidades_por_venta'] = 'Las unidades máximas por venta deben ser un entero entre 1 y 100.';
   }
+  if (tipo === 'venta' && f.venta.texto_retracto.trim().length > MAX_TEXTO_RETRACTO) {
+    e['reglas.texto_retracto'] = `El texto de retracto no puede superar ${MAX_TEXTO_RETRACTO} caracteres.`;
+  }
   return e;
 }
 
@@ -298,7 +303,8 @@ export function construirActualizacion(f: FormIA, tipo: TipoCampana, versionEspe
         max_cuotas: Number(f.cobranza.max_cuotas), plazo_max_dias_primer_pago: Number(f.cobranza.plazo_max_dias_primer_pago),
         plazo_max_dias_total: Number(f.cobranza.plazo_max_dias_total), periodicidades: [...f.cobranza.periodicidades],
       }
-    : { max_unidades_por_venta: Number(f.venta.max_unidades_por_venta), requiere_aceptacion_terminos: f.venta.requiere_aceptacion_terminos };
+    : { max_unidades_por_venta: Number(f.venta.max_unidades_por_venta), requiere_aceptacion_terminos: f.venta.requiere_aceptacion_terminos,
+        ...(f.venta.texto_retracto.trim() ? { texto_retracto: f.venta.texto_retracto.trim() } : {}) };
   const instrucciones = f.instrucciones.trim();
   return {
     version_esperada: versionEsperada, modelo: f.modelo, esfuerzo: f.esfuerzo, prompt_version: Number(f.prompt_version),

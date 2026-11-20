@@ -289,7 +289,7 @@ export type MotivoDesactivacionIA = 'manual' | 'presupuesto' | 'errores';
 export type CodigoRequisitoIA =
   | 'WHATSAPP_NO_HABILITADO' | 'SIN_CONFIGURACION' | 'REGLAS_INVALIDAS' | 'SIN_OFERTAS_ACTIVAS' | 'PRESUPUESTO_CERO'
   | 'SIN_AGENTES_ASIGNADOS' | 'EVALUACION_OFFLINE_PENDIENTE' | 'EVALUACION_ONLINE_PENDIENTE' | 'IA_GLOBAL_DESACTIVADA'
-  | 'PROVEEDOR_FALSO_EN_PRODUCCION' | 'MODELO_SIN_PRECIO';
+  | 'PROVEEDOR_FALSO_EN_PRODUCCION' | 'MODELO_SIN_PRECIO' | 'RETRACTO_SIN_TEXTO';
 export type TipoAlertaIA =
   'presupuesto_campana' | 'presupuesto_conversacion' | 'errores' | 'kill_switch' | 'rechazo_modelo' | 'evaluacion_fallida';
 export type EstadoEvaluacionIA = 'pendiente' | 'en_curso' | 'completada' | 'fallida';
@@ -299,7 +299,11 @@ export interface ReglasCobranza {
   monto_minimo_promesa: string; monto_minimo_cuota: string; max_cuotas: number;
   plazo_max_dias_primer_pago: number; plazo_max_dias_total: number; periodicidades: Exclude<Periodicidad, 'unica'>[];
 }
-export interface ReglasVenta { max_unidades_por_venta: number; requiere_aceptacion_terminos: boolean }
+export interface ReglasVenta {
+  max_unidades_por_venta: number; requiere_aceptacion_terminos: boolean;
+  /** Opcional (≤ 500): si falta, el servidor usa el texto global IA_TEXTO_RETRACTO. */
+  texto_retracto?: string | null;
+}
 export interface VerificacionIA { factores: 'numero_documento'[]; max_intentos: number }
 export interface RequisitosActivacion { cumple: boolean; faltantes: Motivo<CodigoRequisitoIA>[] }
 export interface ConfiguracionIA {

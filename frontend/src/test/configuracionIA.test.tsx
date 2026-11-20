@@ -280,6 +280,38 @@ describe('Ofertas de la campaña de venta (F20)', () => {
   });
 });
 
+describe('Texto de retracto en campañas de venta', () => {
+  it('requisito RETRACTO_SIN_TEXTO con enlace al campo; el texto se envía y se limita a 500', async () => {
+    iniciarSesionComo('supervisor');
+    const m = base({ tipo: 'venta' }, [
+      rutaJson('GET', '/campanas/5/ia', () => configIA({
+        campana_tipo: 'venta', reglas: { max_unidades_por_venta: 2, requiere_aceptacion_terminos: true },
+        requisitos: { cumple: false, faltantes: [{ codigo: 'RETRACTO_SIN_TEXTO', mensaje: 'Falta el texto de retracto.' }] },
+      })),
+      rutaJson('GET', '/campanas/5/ofertas', () => []),
+      ruta('PUT', '/campanas/5/ia', () => respuesta(200, configIA({ campana_tipo: 'venta', version: 4 }))),
+    ]);
+    renderizarApp('/campanas/5');
+    const u = await abrirPestanaIA();
+    const campo = screen.getByLabelText('Texto de retracto');
+    expect(screen.getByText(/Texto legal del derecho de retracto que se incluirá en la constancia de cada venta/)).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Escribir el texto de retracto' }));
+    expect(campo).toHaveFocus();
+
+    await u.click(campo);
+    await u.paste('x'.repeat(501));
+    await u.click(screen.getByRole('button', { name: 'Guardar configuración' }));
+    expect(await screen.findByText('El texto de retracto no puede superar 500 caracteres.')).toBeInTheDocument();
+    expect(cuerpos(m, 'PUT', '/campanas/5/ia')).toHaveLength(0);
+
+    await u.clear(campo);
+    await u.type(campo, 'Tiene 5 días hábiles para retractarse.');
+    await u.click(screen.getByRole('button', { name: 'Guardar configuración' }));
+    await screen.findByText('Configuración guardada (versión 4).');
+    expect((cuerpos(m, 'PUT', '/campanas/5/ia')[0].reglas as Record<string, unknown>).texto_retracto).toBe('Tiene 5 días hábiles para retractarse.');
+  });
+});
+
 describe('Validación y construcción del formulario (unidad)', () => {
   it('formDesdeConfig -> construirActualizacion conserva las reglas y normaliza decimales', () => {
     const c = configIA({ reglas: reglasCobranza() });
